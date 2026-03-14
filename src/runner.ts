@@ -57,7 +57,9 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
   const needsBrowser = plan.steps.some(s => s.action.__type === 'browser')
 
   if (needsBrowser) {
-    browserSession = await launchBrowser({ headed: options.headed })
+    browserSession = await launchBrowser({
+      ...(options.headed !== undefined ? { headed: options.headed } : {}),
+    })
   }
 
   const stepResults: StepResult[] = []
@@ -68,8 +70,8 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
       if (failed) {
         stepResults.push({
           name: step.name,
-          section: step.section,
-          flowOrigin: step.flowOrigin,
+          ...(step.section !== undefined ? { section: step.section } : {}),
+          ...(step.flowOrigin !== undefined ? { flowOrigin: step.flowOrigin } : {}),
           status: 'skip',
           durationMs: 0,
         })
@@ -132,8 +134,8 @@ async function runStep(
       await executeStep(step, ctx, baseUrl, browserSession, options)
       return {
         name: step.name,
-        section: step.section,
-        flowOrigin: step.flowOrigin,
+        ...(step.section !== undefined ? { section: step.section } : {}),
+        ...(step.flowOrigin !== undefined ? { flowOrigin: step.flowOrigin } : {}),
         status: 'pass',
         durationMs: Date.now() - startTime,
       }
@@ -153,8 +155,8 @@ async function runStep(
 
   return {
     name: step.name,
-    section: step.section,
-    flowOrigin: step.flowOrigin,
+    ...(step.section !== undefined ? { section: step.section } : {}),
+    ...(step.flowOrigin !== undefined ? { flowOrigin: step.flowOrigin } : {}),
     status: 'fail',
     durationMs: 0,
     error: safeMessage,
@@ -180,10 +182,10 @@ async function executeStep(
       {
         method: apiAction.method,
         path: apiAction.path,
-        params: apiAction.options.params as Record<string, string> | undefined,
-        query: apiAction.options.query as Record<string, string> | undefined,
-        headers: apiAction.options.headers as Record<string, string> | undefined,
-        body: apiAction.options.body,
+        ...(apiAction.options.params !== undefined ? { params: apiAction.options.params as Record<string, string> } : {}),
+        ...(apiAction.options.query !== undefined ? { query: apiAction.options.query as Record<string, string> } : {}),
+        ...(apiAction.options.headers !== undefined ? { headers: apiAction.options.headers as Record<string, string> } : {}),
+        ...(apiAction.options.body !== undefined ? { body: apiAction.options.body } : {}),
       },
       baseUrl,
       ctx

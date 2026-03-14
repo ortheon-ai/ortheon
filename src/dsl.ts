@@ -112,7 +112,7 @@ export function expect(
 // ---------------------------------------------------------------------------
 
 export function use(flowName: string, inputs?: Record<string, Resolvable<unknown>>): UseStep {
-  return { __type: 'use', flow: flowName, inputs }
+  return { __type: 'use', flow: flowName, ...(inputs !== undefined ? { inputs } : {}) }
 }
 
 // ---------------------------------------------------------------------------

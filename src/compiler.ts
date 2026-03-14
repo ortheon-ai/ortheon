@@ -170,7 +170,7 @@ function expandStep(
       },
       retries: substitutedStep.retries ?? 0,
       saves: apiAction.options.save ?? {},
-      inlineExpect: apiAction.options.expect,
+      ...(apiAction.options.expect !== undefined ? { inlineExpect: apiAction.options.expect } : {}),
       expects: [],
     }
 

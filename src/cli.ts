@@ -53,9 +53,9 @@ program
 
       try {
         const result = await runSpec(spec, {
-          baseUrl: options.baseUrl,
-          headed: options.headed,
-          skipValidation: options.skipValidation,
+          ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+          ...(options.headed !== undefined ? { headed: options.headed } : {}),
+          ...(options.skipValidation !== undefined ? { skipValidation: options.skipValidation } : {}),
         })
 
         results.push(result)
@@ -139,7 +139,8 @@ async function loadSpec(file: string): Promise<Spec | null> {
 async function resolveGlob(pattern: string): Promise<string[]> {
   // Use Node 22+ glob, or fall back to manual resolution
   // For Node 20 compatibility, we do simple directory + extension matching
-  const { glob } = await import('node:fs/promises').then(m => m).catch(() => ({ glob: null }))
+  const fsPromises = await import('node:fs/promises').catch(() => null)
+  const glob = fsPromises !== null ? (fsPromises as unknown as { glob?: unknown }).glob ?? null : null
 
   // Try native glob (Node 22+)
   if (glob && typeof (glob as unknown) === 'function') {

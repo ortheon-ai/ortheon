@@ -76,10 +76,15 @@ export async function executeBrowserStep(
       if ('url' in options) {
         const url = String(ctx.resolveDeep(options.url))
         const fullPattern = url.startsWith('http') ? url : `**${url}`
-        await page.waitForURL(fullPattern, { timeout: options.timeout })
+        await page.waitForURL(fullPattern, {
+          ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+        })
       } else {
         const target = String(ctx.resolveDeep(options.target))
-        await page.locator(target).waitFor({ state: options.state, timeout: options.timeout })
+        await page.locator(target).waitFor({
+          state: options.state,
+          ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+        })
       }
       break
     }
