@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Products – Ortheon Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; padding: 2rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: #111; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.25rem; }
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.08); padding: 1.25rem; }
+    .card h2 { font-size: 1rem; margin-bottom: .5rem; }
+    .card p { font-size: .875rem; color: #666; margin-bottom: 1rem; }
+    .sku { font-size: .75rem; color: #9ca3af; }
+    button { background: #4f46e5; color: #fff; border: none; border-radius: 6px; padding: .5rem .75rem; cursor: pointer; font-size: .875rem; }
+    button:hover { background: #4338ca; }
+    .nav { margin-bottom: 1.5rem; }
+    .nav a { color: #4f46e5; text-decoration: none; font-size: .875rem; }
+  </style>
+</head>
+<body>
+  <div class="nav"><a href="/login">← Sign out</a></div>
+  <h1 data-testid="page-heading">Products</h1>
+  <div class="grid" id="product-grid" data-testid="product-grid"></div>
+  <script>
+    async function load() {
+      const res = await fetch('/api/products');
+      const products = await res.json();
+      const grid = document.getElementById('product-grid');
+      products.forEach(p => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.setAttribute('data-testid', 'product-card');
+        card.setAttribute('data-sku', p.sku);
+        card.innerHTML = `
+          <h2 data-testid="product-name">${p.name}</h2>
+          <p class="sku" data-testid="product-sku">${p.sku}</p>
+          <p>${p.description}</p>
+          <button data-testid="add-to-cart" data-sku="${p.sku}">Add to cart</button>
+        `;
+        grid.appendChild(card);
+      });
+    }
+    load();
+  </script>
+</body>
+</html>

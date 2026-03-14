@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Order Confirmation – Ortheon Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.1); padding: 2rem; width: 420px; }
+    .badge { display: inline-block; background: #d1fae5; color: #065f46; border-radius: 9999px; padding: .25rem .75rem; font-size: .8rem; font-weight: 600; margin-bottom: 1.25rem; }
+    h1 { font-size: 1.4rem; margin-bottom: 1rem; color: #111; }
+    .field { margin-bottom: .75rem; }
+    .field label { font-size: .75rem; color: #9ca3af; display: block; }
+    .field span { font-size: 1rem; color: #111; }
+    .back { display: inline-block; margin-top: 1.5rem; color: #4f46e5; text-decoration: none; font-size: .875rem; }
+  </style>
+</head>
+<body>
+  <div class="card" data-testid="order-confirmation">
+    <div class="badge" data-testid="order-status">confirmed</div>
+    <h1>Order confirmed</h1>
+    <div class="field">
+      <label>Order ID</label>
+      <span data-testid="order-id">loading...</span>
+    </div>
+    <div class="field">
+      <label>SKU</label>
+      <span data-testid="order-sku">loading...</span>
+    </div>
+    <div class="field">
+      <label>Quantity</label>
+      <span data-testid="order-quantity">loading...</span>
+    </div>
+    <a class="back" href="/products">← Back to products</a>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const orderId = window.location.pathname.split('/').pop();
+    async function load() {
+      // Token would normally come from session/cookie; for demo, try to get from sessionStorage
+      const token = sessionStorage.getItem('ortheon_token') || '';
+      const res = await fetch(`/api/orders/${orderId}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (!res.ok) {
+        document.querySelector('[data-testid=order-id]').textContent = 'Not found';
+        return;
+      }
+      const order = await res.json();
+      document.querySelector('[data-testid=order-id]').textContent = order.id;
+      document.querySelector('[data-testid=order-sku]').textContent = order.sku;
+      document.querySelector('[data-testid=order-quantity]').textContent = order.quantity;
+      document.querySelector('[data-testid=order-status]').textContent = order.status;
+    }
+    load();
+  </script>
+</body>
+</html>
