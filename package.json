@@ -18,7 +18,8 @@
     "test:watch": "vitest",
     "demo": "tsx demo/server.ts",
     "examples": "tsx scripts/run-examples.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepare": "husky"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -28,6 +29,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.0",
     "express": "^4.21.1",
+    "husky": "^9.1.7",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
