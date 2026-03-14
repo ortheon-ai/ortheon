@@ -1,4 +1,4 @@
-import { spec, flow, step, api, expect, ref, env, secret, section } from '../../../src/dsl.js'
+import { spec, flow, step, api, expect, ref, env, secret, bearer, section } from '../../../src/dsl.js'
 import { authApi } from '../../contracts/auth.js'
 import { ordersApi } from '../../contracts/orders.js'
 import { products } from '../../data/products.js'
@@ -41,7 +41,7 @@ export default spec('guest order via API', {
           step('create order',
             api('createOrder', {
               headers: {
-                Authorization: ref('token'),
+                Authorization: bearer(ref('token')),
               },
               body: {
                 sku: ref('data.product.sku'),
@@ -71,7 +71,7 @@ export default spec('guest order via API', {
                 orderId: ref('orderId'),
               },
               headers: {
-                Authorization: ref('token'),
+                Authorization: bearer(ref('token')),
               },
               expect: {
                 status: 200,
