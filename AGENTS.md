@@ -7,7 +7,7 @@ Declarative behavioral spec framework. Two executable primitives: `browser(...)`
 ```
 src/
   types.ts           Type system (all types in one file)
-  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret
+  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret, bearer, existsCheck
   compiler.ts        Expand use(), resolve contracts, flatten sections → ExecutionPlan
   validator.ts       Two-pass validation (structural on AST, ref resolution on expanded plan)
   runner.ts          Sequential step execution with retry, save, assert
@@ -21,7 +21,7 @@ src/
     assert.ts        5-matcher assertion engine
 demo/                Express app for runnable examples
 examples/            Contracts, data, flows, and 3 canonical specs
-tests/               Vitest unit tests (context, assert, compiler, validator)
+tests/               Vitest unit tests (context, assert, compiler, validator, golden, bad-specs)
 ```
 
 ## Documentation
@@ -33,11 +33,14 @@ tests/               Vitest unit tests (context, assert, compiler, validator)
 ## Core rules
 
 - Only two executable things: `browser(...)` and `api(...)`. Assertions via `expect(...)`. Reuse via `use(...)`.
-- No hidden state. Browser auth and API auth are separate. Tokens must be acquired and passed explicitly.
+- No hidden state. Browser auth and API auth are separate. Tokens must be acquired and passed explicitly via `bearer(ref('token'))`.
+- `secret()` values are redacted as `[REDACTED]` in all failure output. `env()` values are not redacted.
 - Sequential execution only. A step failure stops the flow.
 - Five matchers: `equals`, `contains`, `matches`, `exists`, `notExists`.
 - Nine browser actions: `goto`, `click`, `type`, `press`, `select`, `check`, `uncheck`, `waitFor`, `extract`.
 - `ref()` paths use dot notation + bracket indexing only. No wildcards, no JSONPath.
+- `use()` expanded steps are named `"<caller step> > <inner step>"`. Double-use of the same flow always produces distinct step names.
+- Inline `expect.body` existence checks use `existsCheck()`, not the string `"exists"`.
 - `save` is uniform: same `{ name: "path" }` shape in both browser and API steps.
 - Reusable flows declare their inputs. `flow(name, { inputs, steps })` -- one shape, no overloads.
 - `section` is cosmetic grouping only -- not reusable, not independently executable.
@@ -47,7 +50,7 @@ tests/               Vitest unit tests (context, assert, compiler, validator)
 ## Commands
 
 ```bash
-npm test              # 74 unit tests
+npm test              # 104 unit tests
 npm run examples      # 3 specs against demo app (19 steps)
 npm run demo          # Start demo server at :3737
 npm run typecheck     # TypeScript --noEmit

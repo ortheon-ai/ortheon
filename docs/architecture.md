@@ -35,9 +35,11 @@ All type definitions live in one file. Key concepts:
 **Dynamic values** are the only way to reference runtime state:
 
 ```ts
-RefValue   = { __type: 'ref', path: string }    // saved value reference
-EnvValue   = { __type: 'env', name: string }    // environment variable
-SecretValue = { __type: 'secret', name: string } // secret (same mechanism, masked in output)
+RefValue    = { __type: 'ref', path: string }      // saved value reference
+EnvValue    = { __type: 'env', name: string }      // environment variable
+SecretValue = { __type: 'secret', name: string }   // secret -- redacted in failure output
+BearerValue = { __type: 'bearer', value: DynamicValue | string } // resolves to "Bearer <value>"
+ExistsCheck = { __type: 'exists_check' }           // existence marker for inline body expects
 ```
 
 `Resolvable<T>` wraps any value that might be a dynamic value at authoring time but becomes a concrete value at runtime.
@@ -76,7 +78,7 @@ Transforms a `Spec` AST into an `ExecutionPlan` -- a flat, ordered list of execu
 
 2. **Resolve contracts** -- for each `api("contractName", ...)`, looks up the contract in `spec.apis` and merges its `method` and `path`. Also accepts `"METHOD /path"` format directly.
 
-3. **Expand `use()` calls** -- inlines the referenced flow's steps. Input bindings are applied via compile-time ref substitution: if the login flow uses `ref("email")` internally and the caller provides `{ email: ref("data.user.email") }`, every `ref("email")` in the inlined steps is replaced with `ref("data.user.email")`.
+3. **Expand `use()` calls** -- inlines the referenced flow's steps. Input bindings are applied via compile-time ref substitution: if the login flow uses `ref("email")` internally and the caller provides `{ email: ref("data.user.email") }`, every `ref("email")` in the inlined steps is replaced with `ref("data.user.email")`. Expanded step names are prefixed with the caller step's name to guarantee uniqueness and traceability: `step('browser login', use('login', ...))` produces steps named `"browser login > open login page"`, `"browser login > fill email"`, etc. This means two invocations of the same flow in one spec always produce distinct, debuggable step names.
 
 4. **Flatten sections** -- collapses sections into the parent step list, preserving the section name as metadata on each step.
 
@@ -103,6 +105,7 @@ Two-pass validation, split to avoid the "two almost-compilers" problem.
 - Every `ref()` traces to a prior `save`, a `data` binding, or a flow input
 - Save ordering: a ref does not precede the step that saves it
 - Path params in contract paths (`{orderId}`) have corresponding `params` entries
+- Step names are unique across the entire expanded plan (catches ambiguous double-use of the same flow)
 
 Contract body shapes are **documentary only** -- not validated. This avoids accidentally building "OpenAPI but smaller and sadder."
 
@@ -138,11 +141,14 @@ ctx.get('order.items[0].sku') // 'sku_1'
 ```
 
 `resolve()` dispatches on `__type`:
-- `ref` -> look up in store (throws if missing)
+- `ref` -> look up in store (throws if missing with a clear path message)
 - `env` -> `process.env[name]` (throws if missing)
-- `secret` -> same as env (different semantic intent for future masking)
+- `secret` -> `process.env[name]`, and records the resolved value in a private `resolvedSecrets` set
+- `bearer` -> resolves inner value then returns `"Bearer <value>"`
 
 `resolveDeep()` recursively resolves all dynamic values in an arbitrary object tree. This is how step options get their concrete values at runtime.
+
+`redact(text)` replaces every value that was ever returned by `resolveSecret()` with `[REDACTED]`. Applied to all step failure messages before they are stored in `StepResult.error`. This means secrets never appear in console output, JSON reports, or error strings regardless of where in the request they were used.
 
 `extractFromResponse()` evaluates save paths against an API response:
 - `"body"` -> entire response body
@@ -166,11 +172,11 @@ One `Browser` + `Page` per spec run. Headless by default.
 
 ### API executor (`src/executors/api.ts`)
 
-Uses Node 20+ native `fetch`. Path param substitution (`{orderId}` -> concrete value), query string building, JSON body serialization. Auto-prefixes `Authorization` headers with `Bearer ` when the value doesn't already have a scheme.
+Uses Node 20+ native `fetch`. Path param substitution (`{orderId}` -> concrete value), query string building, JSON body serialization. Header values pass through unchanged -- use `bearer(ref('token'))` in the DSL to produce `"Bearer <token>"` explicitly.
 
 ### Assertion engine (`src/executors/assert.ts`)
 
-Five matchers. `deepEqual` for structural comparison. `isSubset` for object `contains`. `matchInlineBody` for the inline `expect.body` blocks on API steps -- each field is checked with `equals`, except the special string `"exists"` which checks existence.
+Five matchers. `deepEqual` for structural comparison. `isSubset` for object `contains`. `matchInlineBody` for the inline `expect.body` blocks on API steps -- each field is checked with `equals`, except values that are an `ExistsCheck` marker (`{ __type: 'exists_check' }`), which check existence instead. Use `existsCheck()` from the DSL to produce this marker.
 
 ### Reporter (`src/reporter.ts`)
 
@@ -178,9 +184,9 @@ Console reporter prints section-grouped output with pass/fail icons and duration
 
 ## Key design decisions
 
-### No `exists()` helper function
+### `existsCheck()` for inline body expectations
 
-The `exists` concept lives only as a matcher name string in `expect()` steps and as the literal string `"exists"` in inline API `expect.body` blocks. There is no `exists()` DSL function -- this prevents it from becoming a parallel assertion language.
+Inline `expect.body` blocks use an `ExistsCheck` marker object (`{ __type: 'exists_check' }`) to signal an existence assertion rather than equality. The DSL function is `existsCheck()`. This replaces the earlier approach of using the magic string `"exists"` as a sentinel, which was a collision risk if an API legitimately returned that string as a value. The `exists` and `notExists` matchers remain as named strings in standalone `expect()` steps only.
 
 ### `library` vs `flows`
 
@@ -196,4 +202,4 @@ Ortheon v1 executes flows sequentially. Parallel steps are intentionally out of 
 
 ### Auth separation
 
-Browser auth (cookies/session) and API auth (bearer tokens) are separate. The canonical pattern is: acquire the API token through a dedicated `POST /api/auth/login` API step, then pass it explicitly via `headers: { Authorization: ref('token') }`. Browser login is for browser-only flows.
+Browser auth (cookies/session) and API auth (bearer tokens) are separate. The canonical pattern is: acquire the API token through a dedicated `POST /api/auth/login` API step, then pass it explicitly via `headers: { Authorization: bearer(ref('token')) }`. Browser login is for browser-only flows.

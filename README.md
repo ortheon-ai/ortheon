@@ -23,7 +23,7 @@ export default spec('guest order via API', {
         ),
         step('create order',
           api('createOrder', {
-            headers: { Authorization: ref('token') },
+            headers: { Authorization: bearer(ref('token')) },
             body: { sku: ref('data.product.sku'), quantity: 1 },
             expect: { status: 201, body: { status: 'confirmed' } },
             save: { orderId: 'body.id' },
@@ -126,7 +126,7 @@ export const loginFlow = flow('login', {
 
 ```ts
 // specs/checkout.ortheon.ts
-import { spec, flow, step, api, expect, use, ref, env, secret, section } from 'ortheon'
+import { spec, flow, step, api, expect, use, ref, env, secret, bearer, section } from 'ortheon'
 import { ordersApi } from '../contracts/orders.js'
 import { loginFlow } from '../flows/login.js'
 import { users } from '../data/users.js'
@@ -154,7 +154,7 @@ export default spec('authenticated checkout', {
         section('purchase', [
           step('create order',
             api('createOrder', {
-              headers: { Authorization: ref('token') },
+              headers: { Authorization: bearer(ref('token')) },
               body: { sku: 'sku_123', quantity: 1 },
               expect: { status: 201 },
               save: { orderId: 'body.id', order: 'body' },
@@ -204,9 +204,9 @@ STEPS (11 total):
     1. [api authentication] acquire api token (flow: checkout)
        action: POST /api/auth/login
        save:   {"token":"body.token"}
-    2. [browser authentication] open login page (flow: login)
+    2. [browser authentication] browser login > open login page (flow: login)
        action: browser(goto, "/login")
-    3. [browser authentication] fill email (flow: login)
+    3. [browser authentication] browser login > fill email (flow: login)
        action: browser(type, "[data-testid=email]")
    ...
 ```
@@ -237,7 +237,9 @@ STEPS (11 total):
 |----------|---------|
 | `ref(path)` | Reference a saved value (`ref("order.id")`) |
 | `env(name)` | Read an environment variable |
-| `secret(name)` | Read a secret (same as `env`, masked in future output) |
+| `secret(name)` | Read a secret -- redacted as `[REDACTED]` in all failure output |
+| `bearer(token)` | Wrap a token to produce `"Bearer <token>"` at runtime. Use for `Authorization` headers. |
+| `existsCheck()` | Marker for inline `expect.body` blocks -- asserts a field is non-null without checking its value |
 
 ### Browser actions
 
@@ -271,22 +273,22 @@ Five only. No matcher jungle.
 
 ```ts
 api('createOrder', {
-  params: { orderId: ref('orderId') },    // path params: /orders/{orderId}
-  query: { page: '1' },                   // query string
-  headers: { Authorization: ref('token') }, // request headers
-  body: { sku: 'sku_123', quantity: 1 },   // request body (JSON)
+  params: { orderId: ref('orderId') },              // path params: /orders/{orderId}
+  query: { page: '1' },                             // query string
+  headers: { Authorization: bearer(ref('token')) }, // request headers -- use bearer() for tokens
+  body: { sku: 'sku_123', quantity: 1 },            // request body (JSON)
   expect: {
-    status: 201,                           // assert status code
-    body: { status: 'confirmed' },         // assert body fields (equals)
+    status: 201,                                    // assert status code
+    body: {
+      status: 'confirmed',                          // assert body.status equals 'confirmed'
+      id: existsCheck(),                            // assert body.id is non-null
+    },
   },
   save: {
-    orderId: 'body.id',                    // save response body field
-    order: 'body',                         // save entire body
+    orderId: 'body.id',                             // save response body field
+    order: 'body',                                  // save entire body
   },
 })
-```
-
-The `Authorization` header is auto-prefixed with `Bearer ` if the value doesn't already have a scheme prefix.
 
 ### `ref` path syntax
 
@@ -365,7 +367,7 @@ step('get token', api('POST /api/auth/login', {
 }))
 
 step('create order', api('createOrder', {
-  headers: { Authorization: ref('token') },
+  headers: { Authorization: bearer(ref('token')) },
   // ...
 }))
 ```
@@ -429,7 +431,7 @@ cd ortheon
 npm install
 npx playwright install chromium
 
-npm test                # 74 unit tests (vitest)
+npm test                # 104 unit tests (vitest)
 npm run examples        # 3 specs against demo app (19 steps)
 npm run demo            # start demo server at :3737
 npm run typecheck       # typescript --noEmit

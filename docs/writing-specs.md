@@ -56,7 +56,7 @@ export const accounts = {
 }
 ```
 
-Use `env()` for environment-bound values and `secret()` for sensitive values. Both resolve from `process.env` at runtime. The distinction is semantic -- secrets will be masked in future reporter output.
+Use `env()` for environment-bound values and `secret()` for sensitive values. Both resolve from `process.env` at runtime. Secret values are automatically redacted as `[REDACTED]` in all failure messages and reporter output -- `env()` values are not redacted.
 
 In a spec, bind data to the `data` field:
 
@@ -109,6 +109,16 @@ step('add widget to cart', use('add to cart', { sku: ref('data.product.sku') }))
 
 Input refs inside the reusable flow are substituted at compile time with the caller's values.
 
+Expanded step names are prefixed with the caller step's name, separated by ` > `. So the steps above expand to `"add widget to cart > click add"` and `"add widget to cart > wait for cart badge"` in the plan. This means the same flow can be invoked twice in one spec without name collisions:
+
+```ts
+step('login as buyer', use('login', { email: 'buyer@example.com', ... }))
+step('login as admin', use('login', { email: 'admin@example.com', ... }))
+// expands to:
+// "login as buyer > fill email", "login as buyer > submit"
+// "login as admin > fill email", "login as admin > submit"
+```
+
 ### Sections for long flows
 
 Sections are chapter headings. They group steps for readability in the reporter output. They are not reusable or independently executable.
@@ -135,7 +145,7 @@ flow('full checkout', {
 
 ```ts
 step('create order', api('createOrder', {
-  headers: { Authorization: ref('token') },
+  headers: { Authorization: bearer(ref('token')) },
   body: { sku: ref('data.product.sku'), quantity: 1 },
   expect: { status: 201 },
   save: { orderId: 'body.id' },
@@ -171,13 +181,13 @@ The `expect` block on API steps validates the response:
 expect: {
   status: 201,                    // assert exact status code
   body: {
-    status: 'confirmed',          // assert body.status === 'confirmed'
-    id: 'exists',                 // assert body.id is not null/undefined
+    status: 'confirmed',          // assert body.status equals 'confirmed'
+    id: existsCheck(),            // assert body.id is non-null (no value comparison)
   },
 }
 ```
 
-Body field values are checked with `equals`. The special string `"exists"` checks that the field is present and non-null.
+Body field values are checked with `equals`. Use `existsCheck()` (imported from `ortheon`) to check that a field is present and non-null without comparing its value. Do not use the string `"exists"` -- it will be compared with `equals` like any other literal.
 
 ## Browser steps
 
