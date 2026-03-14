@@ -63,7 +63,7 @@ describe('compile', () => {
   })
 
   describe('use() expansion', () => {
-    it('inlines a referenced flow\'s steps', () => {
+    it('inlines a referenced flow\'s steps with caller-prefixed names', () => {
       const authFlow = flow('login', {
         inputs: { email: 'string', password: 'secret' },
         steps: [
@@ -85,12 +85,60 @@ describe('compile', () => {
       })
 
       const plan = compile(s)
-      // authFlow steps + inlined login steps + create order = 2+2+1 = 5
-      // Wait, all flows are executed. authFlow (2 steps) + checkout (1 inlined use -> 2 steps + 1 api = 3) = 5
       const stepNames = plan.steps.map(s => s.name)
-      expect(stepNames).toContain('goto login')
-      expect(stepNames).toContain('fill email')
+      // Expanded steps are prefixed with caller step name
+      expect(stepNames).toContain('do login > goto login')
+      expect(stepNames).toContain('do login > fill email')
       expect(stepNames).toContain('create order')
+    })
+
+    it('produces distinct step names when the same flow is used twice', () => {
+      const loginFlow = flow('login', {
+        inputs: { email: 'string', password: 'secret' },
+        steps: [
+          step('fill email', browser('type', { target: '[name=email]', value: ref('email') })),
+          step('submit', browser('click', { target: '[type=submit]' })),
+        ],
+      })
+
+      const s = spec('test', {
+        library: [loginFlow],
+        flows: [
+          flow('multi-user-flow', {
+            steps: [
+              step('login as buyer', use('login', { email: 'buyer@example.com', password: 'pass1' })),
+              step('login as admin', use('login', { email: 'admin@example.com', password: 'pass2' })),
+            ],
+          }),
+        ],
+      })
+
+      const plan = compile(s)
+      const stepNames = plan.steps.map(s => s.name)
+      expect(stepNames).toContain('login as buyer > fill email')
+      expect(stepNames).toContain('login as buyer > submit')
+      expect(stepNames).toContain('login as admin > fill email')
+      expect(stepNames).toContain('login as admin > submit')
+      // All four names must be distinct
+      expect(new Set(stepNames).size).toBe(stepNames.length)
+    })
+
+    it('carries flowOrigin metadata on expanded steps', () => {
+      const loginFlow = flow('login', {
+        steps: [step('goto login', browser('goto', { url: '/login' }))],
+      })
+      const s = spec('test', {
+        library: [loginFlow],
+        flows: [
+          flow('main', {
+            steps: [step('do login', use('login'))],
+          }),
+        ],
+      })
+      const plan = compile(s)
+      const expanded = plan.steps.find(s => s.name === 'do login > goto login')
+      expect(expanded).toBeDefined()
+      expect(expanded?.flowOrigin).toBe('login')
     })
 
     it('throws when use() references a nonexistent flow', () => {

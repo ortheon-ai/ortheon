@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runMatcher, matchInlineBody, AssertionError } from '../src/executors/assert.js'
+import { existsCheck } from '../src/dsl.js'
 
 describe('runMatcher', () => {
   describe('equals', () => {
@@ -123,12 +124,18 @@ describe('matchInlineBody', () => {
     expect(() => matchInlineBody(body, { status: 'pending' })).toThrow()
   })
 
-  it('passes when expected field value is "exists" string', () => {
-    expect(() => matchInlineBody(body, { id: 'exists' })).not.toThrow()
+  it('passes when expected field value is existsCheck() marker', () => {
+    expect(() => matchInlineBody(body, { id: existsCheck() })).not.toThrow()
   })
 
-  it('fails when "exists" check fails (field missing)', () => {
-    expect(() => matchInlineBody(body, { missingField: 'exists' })).toThrow()
+  it('fails when existsCheck() check fails (field missing)', () => {
+    expect(() => matchInlineBody(body, { missingField: existsCheck() })).toThrow()
+  })
+
+  it('treats the literal string "exists" as an equality check, not existence', () => {
+    // The string 'exists' is no longer a sentinel -- it is compared with equals
+    expect(() => matchInlineBody(body, { status: 'exists' })).toThrow()
+    expect(() => matchInlineBody({ status: 'exists' }, { status: 'exists' })).not.toThrow()
   })
 
   it('handles null body gracefully', () => {

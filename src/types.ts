@@ -5,7 +5,10 @@
 export type RefValue = { __type: 'ref'; path: string }
 export type EnvValue = { __type: 'env'; name: string }
 export type SecretValue = { __type: 'secret'; name: string }
-export type DynamicValue = RefValue | EnvValue | SecretValue
+// Wraps a token value and resolves to "Bearer <value>" at runtime.
+// Use this for Authorization headers instead of manual string construction.
+export type BearerValue = { __type: 'bearer'; value: DynamicValue | string }
+export type DynamicValue = RefValue | EnvValue | SecretValue | BearerValue
 export type Resolvable<T> = T | DynamicValue
 
 // ---------------------------------------------------------------------------
@@ -53,9 +56,13 @@ export type BrowserStep = { __type: 'browser' } & BrowserOptions
 // API step types
 // ---------------------------------------------------------------------------
 
+// Sentinel marker for inline body expect blocks: { field: existsCheck() }
+// Checks that the field is present and non-null without comparing its value.
+export type ExistsCheck = { __type: 'exists_check' }
+
 export type InlineExpect = {
   status?: number
-  body?: Record<string, Resolvable<unknown>>
+  body?: Record<string, Resolvable<unknown> | ExistsCheck>
 }
 
 export type ApiOptions = {

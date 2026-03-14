@@ -165,8 +165,18 @@ export function runMatcher(
 // Used to validate the `expect.body` block on API steps.
 //
 // Each field in the body expect block is checked with equals.
-// If the value in the expect block is 'exists' (string literal), we check existence.
+// If the value is an ExistsCheck marker ({ __type: 'exists_check' }), existence
+// is checked instead of equality. Use existsCheck() from dsl.ts -- never the
+// raw string "exists", which would be treated as a literal equality check.
 // ---------------------------------------------------------------------------
+
+function isExistsCheck(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { __type?: string }).__type === 'exists_check'
+  )
+}
 
 export function matchInlineBody(
   actual: unknown,
@@ -177,7 +187,7 @@ export function matchInlineBody(
       ? (actual as Record<string, unknown>)[key]
       : undefined
 
-    if (expectedValue === 'exists') {
+    if (isExistsCheck(expectedValue)) {
       runMatcher('exists', actualValue, undefined)
     } else {
       runMatcher('equals', actualValue, expectedValue)

@@ -146,13 +146,18 @@ async function runStep(
     }
   }
 
+  const rawMessage = lastError?.message ?? 'Unknown error'
+  const flowContext = step.flowOrigin ? ` (flow: ${step.flowOrigin})` : ''
+  const enrichedMessage = `Step "${step.name}"${flowContext} failed: ${rawMessage}`
+  const safeMessage = ctx.redact(enrichedMessage)
+
   return {
     name: step.name,
     section: step.section,
     flowOrigin: step.flowOrigin,
     status: 'fail',
     durationMs: 0,
-    error: lastError?.message ?? 'Unknown error',
+    error: safeMessage,
   }
 }
 

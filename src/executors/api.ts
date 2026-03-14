@@ -55,14 +55,7 @@ export async function executeApiCall(
   const resolvedHeaders: Record<string, string> = {}
   if (call.headers) {
     for (const [k, v] of Object.entries(call.headers)) {
-      const resolved = String(context.resolveDeep(v))
-      // Auto-prefix with "Bearer " if the value looks like a token and the header is Authorization
-      // but only if it doesn't already have a scheme prefix
-      if (k.toLowerCase() === 'authorization' && !resolved.startsWith('Bearer ') && !resolved.startsWith('Basic ')) {
-        resolvedHeaders[k] = `Bearer ${resolved}`
-      } else {
-        resolvedHeaders[k] = resolved
-      }
+      resolvedHeaders[k] = String(context.resolveDeep(v))
     }
   }
 

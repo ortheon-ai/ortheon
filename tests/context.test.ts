@@ -139,4 +139,35 @@ describe('RuntimeContext', () => {
       delete process.env['E2E_USER']
     })
   })
+
+  describe('redact', () => {
+    it('replaces a resolved secret value with [REDACTED]', () => {
+      process.env['MY_SECRET'] = 'supersecret123'
+      ctx.resolve({ __type: 'secret', name: 'MY_SECRET' })
+      const redacted = ctx.redact('error: Authorization header value supersecret123 was rejected')
+      expect(redacted).toBe('error: Authorization header value [REDACTED] was rejected')
+      delete process.env['MY_SECRET']
+    })
+
+    it('replaces all occurrences of a secret value', () => {
+      process.env['MY_SECRET'] = 'tok123'
+      ctx.resolve({ __type: 'secret', name: 'MY_SECRET' })
+      const redacted = ctx.redact('tok123 and tok123 again')
+      expect(redacted).toBe('[REDACTED] and [REDACTED] again')
+      delete process.env['MY_SECRET']
+    })
+
+    it('leaves strings unchanged when no secrets have been resolved', () => {
+      const result = ctx.redact('no secrets here')
+      expect(result).toBe('no secrets here')
+    })
+
+    it('does not redact env() values -- only secret() values', () => {
+      process.env['MY_ENV_VAR'] = 'envvalue'
+      ctx.resolve({ __type: 'env', name: 'MY_ENV_VAR' })
+      const result = ctx.redact('message with envvalue')
+      expect(result).toBe('message with envvalue')
+      delete process.env['MY_ENV_VAR']
+    })
+  })
 })

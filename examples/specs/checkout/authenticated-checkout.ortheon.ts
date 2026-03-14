@@ -1,4 +1,4 @@
-import { spec, flow, step, api, expect, use, ref, env, secret, section } from '../../../src/dsl.js'
+import { spec, flow, step, api, expect, use, ref, env, secret, bearer, section } from '../../../src/dsl.js'
 import { authApi } from '../../contracts/auth.js'
 import { ordersApi } from '../../contracts/orders.js'
 import { loginFlow } from '../../flows/login.js'
@@ -61,7 +61,7 @@ export default spec('authenticated checkout creates persistent order', {
           step('create order',
             api('createOrder', {
               headers: {
-                Authorization: ref('token'),
+                Authorization: bearer(ref('token')),
               },
               body: {
                 sku: ref('data.product.sku'),
@@ -91,7 +91,7 @@ export default spec('authenticated checkout creates persistent order', {
                 orderId: ref('orderId'),
               },
               headers: {
-                Authorization: ref('token'),
+                Authorization: bearer(ref('token')),
               },
               expect: {
                 status: 200,

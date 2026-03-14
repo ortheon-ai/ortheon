@@ -252,6 +252,18 @@ export function validateExpandedPlan(plan: ExecutionPlan): ValidationResult {
   const errors: Diagnostic[] = []
   const warnings: Diagnostic[] = []
 
+  // Check for duplicate step names across the entire expanded plan (catches double use() expansion)
+  const allStepNames = new Set<string>()
+  for (const step of plan.steps) {
+    if (allStepNames.has(step.name)) {
+      errors.push({
+        severity: 'error',
+        message: `Duplicate step name in expanded plan: "${step.name}". If this step comes from a reused flow, the use() caller step name is used as a prefix -- ensure each use() step has a unique name.`,
+      })
+    }
+    allStepNames.add(step.name)
+  }
+
   // Track what names have been saved so far (as we walk forward)
   const savedNames = new Set<string>()
 

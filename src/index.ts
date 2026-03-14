@@ -15,6 +15,8 @@ export {
   ref,
   env,
   secret,
+  bearer,
+  existsCheck,
 } from './dsl.js'
 
 // Runtime
@@ -39,6 +41,8 @@ export type {
   ApiStep,
   ExpectStep,
   UseStep,
+  BearerValue,
+  ExistsCheck,
   DynamicValue,
   RefValue,
   EnvValue,

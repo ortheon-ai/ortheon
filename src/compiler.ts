@@ -71,7 +71,7 @@ function buildFlowMap(flows: Flow[]): Map<string, Flow> {
 
 // Substitute ref(inputName) values in a step's options with the caller-provided bindings.
 // This is compile-time substitution: ref("email") -> ref("data.user.email") (or a literal).
-const DYNAMIC_TYPES = new Set(['ref', 'env', 'secret'])
+const DYNAMIC_TYPES = new Set(['ref', 'env', 'secret', 'bearer'])
 
 function substituteRefs(value: unknown, bindings: Record<string, Resolvable<unknown>>): unknown {
   if (value === null || value === undefined) return value
@@ -115,11 +115,17 @@ function expandStep(
   apis: Record<string, ApiContract>,
   sectionName: string | undefined,
   flowOrigin: string | undefined,
-  inputBindings: Record<string, Resolvable<unknown>>
+  inputBindings: Record<string, Resolvable<unknown>>,
+  callerPrefix: string | undefined
 ): ExecutableStep[] {
   // Apply any inherited input substitutions to this step's action
   const substitutedStep = substituteStepRefs(step, inputBindings)
   const action = substitutedStep.action
+
+  // The effective step name includes any caller prefix from a use() site
+  const effectiveName = callerPrefix
+    ? `${callerPrefix} > ${substitutedStep.name}`
+    : substitutedStep.name
 
   if (action.__type === 'use') {
     const useAction = action as UseStep
@@ -134,14 +140,17 @@ function expandStep(
     // The caller-provided inputs become the bindings for the referenced flow's internal refs
     const callerInputs = useAction.inputs ?? {}
 
-    // Expand the referenced flow's steps inline, substituting its internal input refs
+    // Expand the referenced flow's steps inline, substituting its internal input refs.
+    // Use the caller step's effective name as the prefix for expanded step names so that
+    // two invocations of the same flow produce distinct step names in the plan.
     return expandFlowItems(
       referencedFlow.steps,
       flowMap,
       apis,
       sectionName,
       useAction.flow,
-      callerInputs as Record<string, Resolvable<unknown>>
+      callerInputs as Record<string, Resolvable<unknown>>,
+      effectiveName
     )
   }
 
@@ -150,7 +159,7 @@ function expandStep(
     const { method, path } = resolveApiTarget(apiAction.target, apis)
 
     const executableStep: ExecutableStep = {
-      name: substitutedStep.name,
+      name: effectiveName,
       ...(sectionName ? { section: sectionName } : {}),
       ...(flowOrigin ? { flowOrigin } : {}),
       action: {
@@ -170,7 +179,7 @@ function expandStep(
 
   if (action.__type === 'browser') {
     const executableStep: ExecutableStep = {
-      name: substitutedStep.name,
+      name: effectiveName,
       ...(sectionName ? { section: sectionName } : {}),
       ...(flowOrigin ? { flowOrigin } : {}),
       action: action as BrowserStep,
@@ -191,7 +200,7 @@ function expandStep(
   if (action.__type === 'expect') {
     const expectAction = action as ExpectStep
     const executableStep: ExecutableStep = {
-      name: substitutedStep.name,
+      name: effectiveName,
       ...(sectionName ? { section: sectionName } : {}),
       ...(flowOrigin ? { flowOrigin } : {}),
       action: expectAction,
@@ -217,7 +226,8 @@ function expandFlowItems(
   apis: Record<string, ApiContract>,
   parentSection: string | undefined,
   flowOrigin: string | undefined,
-  inputBindings: Record<string, Resolvable<unknown>>
+  inputBindings: Record<string, Resolvable<unknown>>,
+  callerPrefix: string | undefined = undefined
 ): ExecutableStep[] {
   const result: ExecutableStep[] = []
 
@@ -227,12 +237,12 @@ function expandFlowItems(
       const substitutedSteps = item.steps.map(s => substituteStepRefs(s, inputBindings))
       for (const s of substitutedSteps) {
         result.push(
-          ...expandStep(s, flowMap, apis, item.name, flowOrigin, {})
+          ...expandStep(s, flowMap, apis, item.name, flowOrigin, {}, callerPrefix)
         )
       }
     } else {
       result.push(
-        ...expandStep(item, flowMap, apis, parentSection, flowOrigin, inputBindings)
+        ...expandStep(item, flowMap, apis, parentSection, flowOrigin, inputBindings, callerPrefix)
       )
     }
   }
@@ -254,7 +264,7 @@ export function compile(spec: Spec): ExecutionPlan {
 
   // Only execute top-level flows (spec.flows), not library flows.
   for (const flow of flows) {
-    const flowSteps = expandFlowItems(flow.steps, flowMap, apis, undefined, flow.name, {})
+    const flowSteps = expandFlowItems(flow.steps, flowMap, apis, undefined, flow.name, {}, undefined)
     allSteps.push(...flowSteps)
   }
 

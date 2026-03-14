@@ -1,4 +1,4 @@
-import type { DynamicValue, EnvValue, RefValue, SecretValue } from './types.js'
+import type { BearerValue, DynamicValue, EnvValue, RefValue, SecretValue } from './types.js'
 
 // ---------------------------------------------------------------------------
 // Dot-path resolution utilities
@@ -76,6 +76,8 @@ function setPath(obj: Record<string, unknown>, segments: Array<string | number>,
 
 export class RuntimeContext {
   private store: Record<string, unknown> = {}
+  // Tracks all resolved secret values so they can be redacted from output
+  private resolvedSecrets: Set<string> = new Set()
 
   /** Set a value by dot-path key (top-level or nested). */
   set(path: string, value: unknown): void {
@@ -137,6 +139,8 @@ export class RuntimeContext {
         return this.resolveEnv(value)
       case 'secret':
         return this.resolveSecret(value)
+      case 'bearer':
+        return this.resolveBearer(value)
     }
   }
 
@@ -153,13 +157,32 @@ export class RuntimeContext {
   }
 
   private resolveSecret(value: SecretValue): string {
-    // Same mechanism as env for now; the type distinction is semantic
-    // (secrets will be masked in future reporter output)
     const v = process.env[value.name]
     if (v === undefined) {
       throw new Error(`secret("${value.name}") is not set in the environment`)
     }
+    this.resolvedSecrets.add(v)
     return v
+  }
+
+  /** Replace all known secret values in a string with [REDACTED].
+   *  Apply to error messages and any output that may contain resolved secrets.
+   */
+  redact(text: string): string {
+    let result = text
+    for (const secret of this.resolvedSecrets) {
+      if (secret.length > 0) {
+        result = result.split(secret).join('[REDACTED]')
+      }
+    }
+    return result
+  }
+
+  private resolveBearer(value: BearerValue): string {
+    const inner = typeof value.value === 'string'
+      ? value.value
+      : String(this.resolve(value.value as DynamicValue))
+    return `Bearer ${inner}`
   }
 
   /** Recursively resolve all DynamicValues within an arbitrary value tree. */
@@ -182,7 +205,7 @@ export class RuntimeContext {
       typeof value === 'object' &&
       value !== null &&
       '__type' in value &&
-      ['ref', 'env', 'secret'].includes((value as { __type: string }).__type)
+      ['ref', 'env', 'secret', 'bearer'].includes((value as { __type: string }).__type)
     )
   }
 
