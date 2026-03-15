@@ -308,24 +308,24 @@ Five only. No matcher jungle.
 
 ### API step options
 
-````ts
-api('createOrder', {
-  params: { orderId: ref('orderId') },              // path params: /orders/{orderId}
-  query: { page: '1' },                             // query string
-  headers: { Authorization: bearer(ref('token')) }, // request headers -- use bearer() for tokens
-  body: { sku: 'sku_123', quantity: 1 },            // request body (JSON)
+```ts
+api("createOrder", {
+  params: { orderId: ref("orderId") }, // path params: /orders/{orderId}
+  query: { page: "1" }, // query string
+  headers: { Authorization: bearer(ref("token")) }, // request headers -- use bearer() for tokens
+  body: { sku: "sku_123", quantity: 1 }, // request body (JSON)
   expect: {
-    status: 201,                                    // assert status code
+    status: 201, // assert status code
     body: {
-      status: 'confirmed',                          // assert body.status equals 'confirmed'
-      id: existsCheck(),                            // assert body.id is non-null
+      status: "confirmed", // assert body.status equals 'confirmed'
+      id: existsCheck(), // assert body.id is non-null
     },
   },
   save: {
-    orderId: 'body.id',                             // save response body field
-    order: 'body',                                  // save entire body
+    orderId: "body.id", // save response body field
+    order: "body", // save entire body
   },
-})
+});
 ```
 
 ### `ref` path syntax
@@ -333,10 +333,10 @@ api('createOrder', {
 Dot notation and bracket indexing. Nothing else.
 
 ```ts
-ref('orderId')              // top-level saved value
-ref('order.id')             // nested property
-ref('order.items[0].sku')   // array indexing
-ref('data.user.email')      // data catalog value
+ref("orderId"); // top-level saved value
+ref("order.id"); // nested property
+ref("order.items[0].sku"); // array indexing
+ref("data.user.email"); // data catalog value
 ```
 
 No wildcards. No filters. No JSONPath. No recursive descent.
@@ -487,4 +487,3 @@ npm run typecheck       # typescript --noEmit
 ## License
 
 MIT
-````
