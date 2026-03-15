@@ -337,7 +337,7 @@ ref('orderId')              // top-level saved value
 ref('order.id')             // nested property
 ref('order.items[0].sku')   // array indexing
 ref('data.user.email')      // data catalog value
-````
+```
 
 No wildcards. No filters. No JSONPath. No recursive descent.
 
@@ -487,3 +487,4 @@ npm run typecheck       # typescript --noEmit
 ## License
 
 MIT
+````
