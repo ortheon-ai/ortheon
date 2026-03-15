@@ -326,6 +326,7 @@ api('createOrder', {
     order: 'body',                                  // save entire body
   },
 })
+```
 
 ### `ref` path syntax
 
