@@ -1,44 +1,53 @@
 # Ortheon
 
-Declarative behavioral specs for real infrastructure. Every step is either a browser interaction or an API call. Everything else is structure.
+Declarative behavioral specs for real infrastructure. Every step is either a browser interaction or an API call.
 
 ## What Ortheon does
 
-Ortheon describes long behavioral flows over real systems using only two executable primitives: `browser(...)` and `api(...)`. Steps save named outputs. Later steps assert on them. That's the whole machine.
+Ortheon describes long behavioral flows over real systems using only two executable primitives: `browser(...)` and `api(...)`. Steps save named outputs. Later steps assert on them.
 
 ```ts
-export default spec('guest order via API', {
-  baseUrl: env('APP_BASE_URL'),
+export default spec("guest order via API", {
+  baseUrl: env("APP_BASE_URL"),
   apis: { ...authApi, ...ordersApi },
   data: { product: products.defaultWidget },
 
   flows: [
-    flow('order flow', {
+    flow("order flow", {
       steps: [
-        step('acquire token',
-          api('login', {
-            body: { email: 'buyer@example.com', password: secret('E2E_USER_PASSWORD') },
-            save: { token: 'body.token' },
-          })
+        step(
+          "acquire token",
+          api("login", {
+            body: {
+              email: "buyer@example.com",
+              password: secret("E2E_USER_PASSWORD"),
+            },
+            save: { token: "body.token" },
+          }),
         ),
-        step('create order',
-          api('createOrder', {
-            headers: { Authorization: bearer(ref('token')) },
-            body: { sku: ref('data.product.sku'), quantity: 1 },
-            expect: { status: 201, body: { status: 'confirmed' } },
-            save: { orderId: 'body.id' },
-          })
+        step(
+          "create order",
+          api("createOrder", {
+            headers: { Authorization: bearer(ref("token")) },
+            body: { sku: ref("data.product.sku"), quantity: 1 },
+            expect: { status: 201, body: { status: "confirmed" } },
+            save: { orderId: "body.id" },
+          }),
         ),
-        step('verify side effects',
-          api('verifyOrderEffects', {
-            params: { orderId: ref('orderId') },
-            expect: { status: 200, body: { orderExists: true, logRecorded: true } },
-          })
+        step(
+          "verify side effects",
+          api("verifyOrderEffects", {
+            params: { orderId: ref("orderId") },
+            expect: {
+              status: 200,
+              body: { orderExists: true, logRecorded: true },
+            },
+          }),
         ),
       ],
     }),
   ],
-})
+});
 ```
 
 ## Why this shape
@@ -67,107 +76,135 @@ Contracts declare what APIs exist. Body shapes are documentary -- only param key
 
 ```ts
 // contracts/orders.ts
-import type { ApiContract } from 'ortheon'
+import type { ApiContract } from "ortheon";
 
 export const ordersApi: Record<string, ApiContract> = {
   createOrder: {
-    method: 'POST',
-    path: '/api/orders',
-    purpose: 'Create a new order for the authenticated user',
+    method: "POST",
+    path: "/api/orders",
+    purpose: "Create a new order for the authenticated user",
   },
   getOrder: {
-    method: 'GET',
-    path: '/api/orders/{orderId}',
-    purpose: 'Fetch an order by id',
-    request: { params: { orderId: 'string' } },
+    method: "GET",
+    path: "/api/orders/{orderId}",
+    purpose: "Fetch an order by id",
+    request: { params: { orderId: "string" } },
   },
-}
+};
 ```
 
 ### 2. Define data catalogs
 
 ```ts
 // data/users.ts
-import { env, secret } from 'ortheon'
+import { env, secret } from "ortheon";
 
 export const users = {
   standardBuyer: {
-    email: env('E2E_USER_EMAIL'),
-    password: secret('E2E_USER_PASSWORD'),
-    firstName: 'Winton',
+    email: env("E2E_USER_EMAIL"),
+    password: secret("E2E_USER_PASSWORD"),
+    firstName: "Winton",
   },
-}
+};
 ```
 
 ### 3. Define reusable flows
 
-Flows declare their inputs explicitly. No mushy implicit bindings.
+Flows declare their inputs explicitly.
 
 ```ts
 // flows/login.ts
-import { flow, step, browser, ref } from 'ortheon'
+import { flow, step, browser, ref } from "ortheon";
 
-export const loginFlow = flow('login', {
+export const loginFlow = flow("login", {
   inputs: {
-    email: 'string',
-    password: 'secret',
+    email: "string",
+    password: "secret",
   },
   steps: [
-    step('open login page', browser('goto', { url: '/login' })),
-    step('fill email', browser('type', { target: '[name=email]', value: ref('email') })),
-    step('fill password', browser('type', { target: '[name=password]', value: ref('password') })),
-    step('submit', browser('click', { target: '[data-testid=submit]' })),
-    step('wait for redirect', browser('waitFor', { url: '/dashboard' })),
+    step("open login page", browser("goto", { url: "/login" })),
+    step(
+      "fill email",
+      browser("type", { target: "[name=email]", value: ref("email") }),
+    ),
+    step(
+      "fill password",
+      browser("type", { target: "[name=password]", value: ref("password") }),
+    ),
+    step("submit", browser("click", { target: "[data-testid=submit]" })),
+    step("wait for redirect", browser("waitFor", { url: "/dashboard" })),
   ],
-})
+});
 ```
 
 ### 4. Write a spec
 
 ```ts
 // specs/checkout.ortheon.ts
-import { spec, flow, step, api, expect, use, ref, env, secret, bearer, section } from 'ortheon'
-import { ordersApi } from '../contracts/orders.js'
-import { loginFlow } from '../flows/login.js'
-import { users } from '../data/users.js'
+import {
+  spec,
+  flow,
+  step,
+  api,
+  expect,
+  use,
+  ref,
+  env,
+  secret,
+  bearer,
+  section,
+} from "ortheon";
+import { ordersApi } from "../contracts/orders.js";
+import { loginFlow } from "../flows/login.js";
+import { users } from "../data/users.js";
 
-export default spec('authenticated checkout', {
-  baseUrl: env('APP_BASE_URL'),
+export default spec("authenticated checkout", {
+  baseUrl: env("APP_BASE_URL"),
   apis: { ...ordersApi },
   data: { user: users.standardBuyer },
   library: [loginFlow],
 
   flows: [
-    flow('checkout', {
+    flow("checkout", {
       steps: [
-        section('authentication', [
-          step('get api token',
-            api('POST /api/auth/login', {
-              body: { email: 'buyer@example.com', password: secret('E2E_USER_PASSWORD') },
-              save: { token: 'body.token' },
-            })
+        section("authentication", [
+          step(
+            "get api token",
+            api("POST /api/auth/login", {
+              body: {
+                email: "buyer@example.com",
+                password: secret("E2E_USER_PASSWORD"),
+              },
+              save: { token: "body.token" },
+            }),
           ),
-          step('browser login',
-            use('login', { email: ref('data.user.email'), password: ref('data.user.password') })
+          step(
+            "browser login",
+            use("login", {
+              email: ref("data.user.email"),
+              password: ref("data.user.password"),
+            }),
           ),
         ]),
-        section('purchase', [
-          step('create order',
-            api('createOrder', {
-              headers: { Authorization: bearer(ref('token')) },
-              body: { sku: 'sku_123', quantity: 1 },
+        section("purchase", [
+          step(
+            "create order",
+            api("createOrder", {
+              headers: { Authorization: bearer(ref("token")) },
+              body: { sku: "sku_123", quantity: 1 },
               expect: { status: 201 },
-              save: { orderId: 'body.id', order: 'body' },
-            })
+              save: { orderId: "body.id", order: "body" },
+            }),
           ),
-          step('order confirmed',
-            expect(ref('order.status'), 'equals', 'confirmed')
+          step(
+            "order confirmed",
+            expect(ref("order.status"), "equals", "confirmed"),
           ),
         ]),
       ],
     }),
   ],
-})
+});
 ```
 
 ### 5. Run it
@@ -178,19 +215,19 @@ APP_BASE_URL=http://localhost:3000 ortheon run 'specs/**/*.ortheon.ts'
 
 ## CLI
 
-Two commands. No buffet.
+Two commands, `run` and `expand`.
 
 ### `ortheon run <glob>`
 
 Run spec files matching a glob pattern.
 
-| Flag                 | Description                          | Default   |
-|----------------------|--------------------------------------|-----------|
-| `--base-url <url>`   | Override spec `baseUrl`              | --        |
-| `--reporter <type>`  | `console` or `json`                  | `console` |
-| `--headed`           | Show the browser window              | --        |
-| `--timeout <ms>`     | Default step timeout                 | `30000`   |
-| `--skip-validation`  | Skip pre-run validation              | --        |
+| Flag                | Description             | Default   |
+| ------------------- | ----------------------- | --------- |
+| `--base-url <url>`  | Override spec `baseUrl` | --        |
+| `--reporter <type>` | `console` or `json`     | `console` |
+| `--headed`          | Show the browser window | --        |
+| `--timeout <ms>`    | Default step timeout    | `30000`   |
+| `--skip-validation` | Skip pre-run validation | --        |
 
 ### `ortheon expand <file>`
 
@@ -215,45 +252,45 @@ STEPS (11 total):
 
 ### Primitives
 
-| Function | Purpose |
-|----------|---------|
-| `spec(name, config)` | Top-level behavioral spec |
-| `flow(name, { inputs?, steps })` | Named sequence of steps |
-| `step(name, action, { retries? }?)` | Single executable step |
-| `section(name, steps)` | Cosmetic grouping (not reusable) |
+| Function                            | Purpose                          |
+| ----------------------------------- | -------------------------------- |
+| `spec(name, config)`                | Top-level behavioral spec        |
+| `flow(name, { inputs?, steps })`    | Named sequence of steps          |
+| `step(name, action, { retries? }?)` | Single executable step           |
+| `section(name, steps)`              | Cosmetic grouping (not reusable) |
 
 ### Actions
 
-| Function | Purpose |
-|----------|---------|
-| `browser(action, options)` | Browser interaction |
-| `api(target, options?)` | HTTP API call (named contract or `"METHOD /path"`) |
-| `expect(value, matcher, expected?)` | Standalone assertion |
-| `use(flowName, inputs?)` | Inline a reusable flow |
+| Function                            | Purpose                                            |
+| ----------------------------------- | -------------------------------------------------- |
+| `browser(action, options)`          | Browser interaction                                |
+| `api(target, options?)`             | HTTP API call (named contract or `"METHOD /path"`) |
+| `expect(value, matcher, expected?)` | Standalone assertion                               |
+| `use(flowName, inputs?)`            | Inline a reusable flow                             |
 
 ### Helpers
 
-| Function | Purpose |
-|----------|---------|
-| `ref(path)` | Reference a saved value (`ref("order.id")`) |
-| `env(name)` | Read an environment variable |
-| `secret(name)` | Read a secret -- redacted as `[REDACTED]` in all failure output |
-| `bearer(token)` | Wrap a token to produce `"Bearer <token>"` at runtime. Use for `Authorization` headers. |
+| Function        | Purpose                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------ |
+| `ref(path)`     | Reference a saved value (`ref("order.id")`)                                                      |
+| `env(name)`     | Read an environment variable                                                                     |
+| `secret(name)`  | Read a secret -- redacted as `[REDACTED]` in all failure output                                  |
+| `bearer(token)` | Wrap a token to produce `"Bearer <token>"` at runtime. Use for `Authorization` headers.          |
 | `existsCheck()` | Marker for inline `expect.body` blocks -- asserts a field is non-null without checking its value |
 
 ### Browser actions
 
-| Action    | Options | Playwright equivalent |
-|-----------|---------|----------------------|
-| `goto`    | `{ url }` | `page.goto(url)` |
-| `click`   | `{ target }` | `page.locator(target).click()` |
-| `type`    | `{ target, value }` | `page.locator(target).fill(value)` |
-| `press`   | `{ target, key }` | `page.locator(target).press(key)` |
-| `select`  | `{ target, value }` | `page.locator(target).selectOption(value)` |
-| `check`   | `{ target }` | `page.locator(target).check()` |
-| `uncheck` | `{ target }` | `page.locator(target).uncheck()` |
+| Action    | Options                                              | Playwright equivalent                      |
+| --------- | ---------------------------------------------------- | ------------------------------------------ |
+| `goto`    | `{ url }`                                            | `page.goto(url)`                           |
+| `click`   | `{ target }`                                         | `page.locator(target).click()`             |
+| `type`    | `{ target, value }`                                  | `page.locator(target).fill(value)`         |
+| `press`   | `{ target, key }`                                    | `page.locator(target).press(key)`          |
+| `select`  | `{ target, value }`                                  | `page.locator(target).selectOption(value)` |
+| `check`   | `{ target }`                                         | `page.locator(target).check()`             |
+| `uncheck` | `{ target }`                                         | `page.locator(target).uncheck()`           |
 | `waitFor` | `{ target, state, timeout? }` or `{ url, timeout? }` | `locator.waitFor()` or `page.waitForURL()` |
-| `extract` | `{ target, save: { name: source } }` | See extract sources below |
+| `extract` | `{ target, save: { name: source } }`                 | See extract sources below                  |
 
 Extract sources: `"text"`, `"value"`, `"html"`, `"attr:href"`, `"attr:data-*"`, etc.
 
@@ -261,17 +298,17 @@ Extract sources: `"text"`, `"value"`, `"html"`, `"attr:href"`, `"attr:data-*"`, 
 
 Five only. No matcher jungle.
 
-| Matcher | Purpose | Expected required? |
-|---------|---------|-------------------|
-| `equals` | Strict deep equality | Yes |
-| `contains` | Substring, array includes, or object subset | Yes |
-| `matches` | Regex test | Yes |
-| `exists` | Not null/undefined | No |
-| `notExists` | Is null/undefined | No |
+| Matcher     | Purpose                                     | Expected required? |
+| ----------- | ------------------------------------------- | ------------------ |
+| `equals`    | Strict deep equality                        | Yes                |
+| `contains`  | Substring, array includes, or object subset | Yes                |
+| `matches`   | Regex test                                  | Yes                |
+| `exists`    | Not null/undefined                          | No                 |
+| `notExists` | Is null/undefined                           | No                 |
 
 ### API step options
 
-```ts
+````ts
 api('createOrder', {
   params: { orderId: ref('orderId') },              // path params: /orders/{orderId}
   query: { page: '1' },                             // query string
@@ -299,7 +336,7 @@ ref('orderId')              // top-level saved value
 ref('order.id')             // nested property
 ref('order.items[0].sku')   // array indexing
 ref('data.user.email')      // data catalog value
-```
+````
 
 No wildcards. No filters. No JSONPath. No recursive descent.
 
@@ -352,7 +389,7 @@ The `retries` option is the only modifier:
 step('flaky verification', api('verifyEffects', { ... }), { retries: 2 })
 ```
 
-This retries the entire step up to 2 extra times. No backoff DSL. No retry conditions.
+This retries the entire step up to 2 extra times.
 
 ## Auth model
 
@@ -361,15 +398,21 @@ Browser auth and API auth are separate. No hidden state leaks between them.
 If a spec needs both browser and API steps, it acquires the API token through a dedicated API step:
 
 ```ts
-step('get token', api('POST /api/auth/login', {
-  body: { email: '...', password: secret('PASSWORD') },
-  save: { token: 'body.token' },
-}))
+step(
+  "get token",
+  api("POST /api/auth/login", {
+    body: { email: "...", password: secret("PASSWORD") },
+    save: { token: "body.token" },
+  }),
+);
 
-step('create order', api('createOrder', {
-  headers: { Authorization: bearer(ref('token')) },
-  // ...
-}))
+step(
+  "create order",
+  api("createOrder", {
+    headers: { Authorization: bearer(ref("token")) },
+    // ...
+  }),
+);
 ```
 
 Browser login is for browser-authenticated flows only.
@@ -382,13 +425,16 @@ If the system under test has side effects (database writes, event publishing, lo
 // In the app under test:
 // GET /_verify/orders/:id -> { orderExists, logRecorded, eventPublished }
 
-step('verify side effects', api('verifyOrderEffects', {
-  params: { orderId: ref('orderId') },
-  expect: {
-    status: 200,
-    body: { orderExists: true, logRecorded: true, eventPublished: true },
-  },
-}))
+step(
+  "verify side effects",
+  api("verifyOrderEffects", {
+    params: { orderId: ref("orderId") },
+    expect: {
+      status: 200,
+      body: { orderExists: true, logRecorded: true, eventPublished: true },
+    },
+  }),
+);
 ```
 
 Ortheon does not access databases, log systems, or event buses directly. If behavior matters, expose it through HTTP.
