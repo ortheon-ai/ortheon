@@ -6,6 +6,7 @@
   "engines": {
     "node": ">=20"
   },
+  "files": ["dist"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -19,7 +20,8 @@
     "demo": "tsx demo/server.ts",
     "examples": "tsx scripts/run-examples.ts",
     "typecheck": "tsc --noEmit",
-    "prepare": "husky"
+    "prepare": "husky",
+    "prepublishOnly": "npm test && npm run build"
   },
   "dependencies": {
     "commander": "^12.1.0",
