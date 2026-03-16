@@ -245,26 +245,24 @@ function validateStepAction(
       } else {
         // Check that all declared inputs are provided and no undeclared inputs are passed
         const referencedFlow = flowMap.get(useAction.flow)
-        if (referencedFlow?.inputs) {
-          const declaredInputs = Object.keys(referencedFlow.inputs)
-          const providedInputs = Object.keys(useAction.inputs ?? {})
-          for (const required of declaredInputs) {
-            if (!providedInputs.includes(required)) {
-              errors.push({
-                severity: 'error',
-                message: `use("${useAction.flow}") is missing required input "${required}" in ${stepLocation}`,
-                location: stepLocation,
-              })
-            }
+        const declaredInputs = Object.keys(referencedFlow?.inputs ?? {})
+        const providedInputs = Object.keys(useAction.inputs ?? {})
+        for (const required of declaredInputs) {
+          if (!providedInputs.includes(required)) {
+            errors.push({
+              severity: 'error',
+              message: `use("${useAction.flow}") is missing required input "${required}" in ${stepLocation}`,
+              location: stepLocation,
+            })
           }
-          for (const extra of providedInputs) {
-            if (!declaredInputs.includes(extra)) {
-              warnings.push({
-                severity: 'warning',
-                message: `use("${useAction.flow}") provides undeclared input "${extra}" in ${stepLocation}`,
-                location: stepLocation,
-              })
-            }
+        }
+        for (const extra of providedInputs) {
+          if (!declaredInputs.includes(extra)) {
+            warnings.push({
+              severity: 'warning',
+              message: `use("${useAction.flow}") provides undeclared input "${extra}" in ${stepLocation}`,
+              location: stepLocation,
+            })
           }
         }
       }

@@ -54,6 +54,24 @@ describe('bad-spec fixtures', () => {
       expect(result.errors.some(e => e.message.includes('nonExistentLoginFlow'))).toBe(true)
     })
 
+    it('warns when use() passes inputs to a flow that declares none', () => {
+      const s = spec('extra input no declaration', {
+        flows: [
+          flow('setup', {
+            steps: [step('goto', browser('goto', { url: '/setup' }))],
+          }),
+          flow('main', {
+            steps: [step('do setup', use('setup', { foo: 'bar' }))],
+          }),
+        ],
+      })
+
+      const result = validateStructure(s)
+      expect(result.warnings.some(w =>
+        w.message.includes('foo') && w.message.includes('undeclared input')
+      )).toBe(true)
+    })
+
     it('reports use() that omits a required input declared by the referenced flow', () => {
       const s = spec('missing required input', {
         flows: [
