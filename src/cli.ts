@@ -8,7 +8,6 @@ import { validate } from './validator.js'
 import { runSpec } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
 import { resolveGlob } from './loader.js'
-import { discoverSuites, startServer } from './server/app.js'
 import type { Spec, SpecResult } from './types.js'
 
 const packageJson = JSON.parse(
@@ -145,6 +144,8 @@ program
       process.env['APP_BASE_URL'] ??= options.baseUrl
     }
     process.env['ORTHEON_SERVER_URL'] ??= serverUrl
+
+    const { discoverSuites, startServer } = await import('./server/app.js')
 
     console.log(`Discovering specs matching: ${glob}`)
     const suites = await discoverSuites(glob, cwd)
