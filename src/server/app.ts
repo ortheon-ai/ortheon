@@ -330,6 +330,7 @@ export function createApp(
             ? {
                 id: lastRun.id,
                 status: lastRun.status,
+                expectedOutcome: lastRun.expectedOutcome,
                 meetsExpectedOutcome: isTerminalStatus(lastRun.status)
                   ? lastRun.status === lastRun.expectedOutcome
                   : null,

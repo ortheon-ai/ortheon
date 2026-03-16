@@ -301,7 +301,7 @@ function renderSuiteGrid(suites, searchVal) {
           const ago = timeAgo(s.lastRun.startedAt)
           const exact = new Date(s.lastRun.startedAt).toLocaleString()
           const dur = s.lastRun.durationMs !== null ? ` · ${durationLabel(s.lastRun.durationMs)}` : ''
-          const expectedOutcome = s.expectedOutcome ?? 'pass'
+          const expectedOutcome = s.lastRun.expectedOutcome ?? s.expectedOutcome ?? 'pass'
           const meetsExpected = s.lastRun.meetsExpectedOutcome
           lastRunHtml = `
             <div class="suite-card-last-run" data-testid="suite-last-run">
