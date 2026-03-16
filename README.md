@@ -288,7 +288,7 @@ All under `/api`. Suite IDs are base64url-encoded relative file paths.
 | GET    | `/api/runs`               | List all runs (summaries)                       |
 | GET    | `/api/runs/:id`           | Full run detail with per-flow, per-step results |
 
-POST body for `/run` (all optional): `{ headed?, baseUrl?, timeoutMs? }`.
+POST `/api/suites/:id/run` and POST `/api/run-all` accept an optional JSON body. No run overrides (e.g. `baseUrl`, `headed`, `timeoutMs`) are accepted — the server uses the spec and process environment only (security). For run-all, body may include `{ excludeTags?: string[] }` to skip suites with those tags.
 
 `GET /api/runs/:id` returns a `flows` array that mirrors the authored top-level flows in the spec. Each flow entry contains its steps, pass/fail/skip counts, and the original flow name.
 
