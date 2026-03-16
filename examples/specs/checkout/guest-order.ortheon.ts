@@ -7,7 +7,7 @@ import { products } from '../../data/products.js'
 // Acquires token via API auth, creates an order, fetches it back, verifies side effects.
 // No browser steps -- demonstrates pure API specs.
 export default spec('guest order via API', {
-  baseUrl: env('APP_BASE_URL'),
+  baseUrl: env('DEMO_BASE_URL'),
   apis: {
     ...authApi,
     ...ordersApi,

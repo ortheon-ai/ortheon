@@ -24,13 +24,11 @@ program
 program
   .command('run <glob>')
   .description('Run spec files matching the given glob pattern')
-  .option('--base-url <url>', 'Override the spec baseUrl (also reads APP_BASE_URL env var)')
   .option('--reporter <type>', 'Output format: console | json (default: console)', 'console')
   .option('--headed', 'Run browser in headed mode (show the browser window)')
   .option('--timeout <ms>', 'Default step timeout in milliseconds', '30000')
   .option('--skip-validation', 'Skip pre-run validation')
   .action(async (glob: string, options: {
-    baseUrl?: string
     reporter: string
     headed?: boolean
     timeout: string
@@ -52,7 +50,6 @@ program
 
       try {
         const result = await runSpec(spec, {
-          ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
           ...(options.headed !== undefined ? { headed: options.headed } : {}),
           ...(options.skipValidation !== undefined ? { skipValidation: options.skipValidation } : {}),
         })
@@ -120,10 +117,8 @@ program
   .command('serve <glob>')
   .description('Start the Ortheon web server for browsing and running specs')
   .option('--port <port>', 'Port to listen on', '4000')
-  .option('--base-url <url>', 'Default base URL for running specs (also reads APP_BASE_URL env var)')
   .action(async (glob: string, options: {
     port: string
-    baseUrl?: string
   }) => {
     const port = parseInt(options.port, 10)
     if (isNaN(port) || port < 1 || port > 65535) {
@@ -134,13 +129,8 @@ program
     const cwd = process.cwd()
     const serverUrl = `http://localhost:${port}`
 
-    // Set environment variables so specs can resolve their own base URLs.
-    // --base-url sets APP_BASE_URL (the target app under test).
     // ORTHEON_SERVER_URL is always set to this server's own address so
     // specs like run-suites.ortheon.ts can call the ortheon API directly.
-    if (options.baseUrl !== undefined) {
-      process.env['APP_BASE_URL'] ??= options.baseUrl
-    }
     process.env['ORTHEON_SERVER_URL'] ??= serverUrl
 
     const { discoverSuites, startServer } = await import('./server/app.js')
@@ -153,8 +143,7 @@ program
       process.exit(1)
     }
 
-    // Do not pass baseUrlOverride -- each spec resolves its own base URL
-    // from its env() references (APP_BASE_URL, ORTHEON_SERVER_URL, etc.).
+    // Each spec resolves its own base URL from its env() references.
     // POST /api/suites/:id/run body.baseUrl can still override per-run.
     await startServer(suites, port)
   })

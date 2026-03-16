@@ -6,7 +6,7 @@ import { spec, flow, step, expect, ref, env } from '../../../src/dsl.js'
 // producing a run with status 'error' and a non-empty validation.errors array.
 
 export default spec('invalid: bad refs fixture', {
-  baseUrl: env('APP_BASE_URL'),
+  baseUrl: env('DEMO_BASE_URL'),
   tags: ['invalid-fixture'],
   expectedOutcome: 'error',
   flows: [

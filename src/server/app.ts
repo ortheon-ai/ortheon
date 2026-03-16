@@ -483,19 +483,12 @@ export function createApp(
       return;
     }
 
-    // Validate body shape
+    // Validate body shape (no run overrides accepted — baseUrl/headed/timeoutMs would be a security risk)
     const body = req.body as Record<string, unknown> | undefined | null;
     if (body !== undefined && body !== null && typeof body !== "object") {
       res.status(400).json({ error: "Request body must be a JSON object" });
       return;
     }
-
-    const headed =
-      typeof body?.["headed"] === "boolean" ? body["headed"] : undefined;
-    const reqBaseUrl =
-      typeof body?.["baseUrl"] === "string" ? body["baseUrl"] : undefined;
-    const timeoutMs =
-      typeof body?.["timeoutMs"] === "number" ? body["timeoutMs"] : undefined;
 
     // If the suite failed to load, create an immediate error run
     if (suite.loadError !== null || suite.spec === null) {
@@ -534,17 +527,7 @@ export function createApp(
     };
     runManager.add(run);
 
-    // Only override baseUrl when explicitly requested in the POST body.
-    // Specs resolve their own base URLs from env() at runtime.
-    const runOptions: {
-      headed?: boolean;
-      baseUrl?: string;
-      timeoutMs?: number;
-    } = {};
-    if (headed !== undefined) runOptions.headed = headed;
-    if (reqBaseUrl !== undefined) runOptions.baseUrl = reqBaseUrl;
-    if (timeoutMs !== undefined) runOptions.timeoutMs = timeoutMs;
-    void executeRun(run, suite.spec, runManager, runOptions);
+    void executeRun(run, suite.spec, runManager);
 
     res.status(201).json({ runId: run.id });
   });
@@ -552,11 +535,9 @@ export function createApp(
   // -------------------------------------------------------------------------
   // POST /api/run-all -- start a run for every suite (optionally filtered)
   //
-  // Optional JSON body:
-  //   { headed?: boolean, baseUrl?: string, timeoutMs?: number,
-  //     excludeTags?: string[] }
-  //
+  // Optional JSON body: { excludeTags?: string[] }
   // excludeTags skips any suite that has at least one of the listed tags.
+  // No run overrides (baseUrl/headed/timeoutMs) — security: server uses spec + env only.
   // -------------------------------------------------------------------------
 
   app.post("/api/run-all", (req, res) => {
@@ -566,12 +547,6 @@ export function createApp(
       return;
     }
 
-    const headed =
-      typeof body?.["headed"] === "boolean" ? body["headed"] : undefined;
-    const reqBaseUrl =
-      typeof body?.["baseUrl"] === "string" ? body["baseUrl"] : undefined;
-    const timeoutMs =
-      typeof body?.["timeoutMs"] === "number" ? body["timeoutMs"] : undefined;
     const excludeTags: string[] = Array.isArray(body?.["excludeTags"])
       ? (body["excludeTags"] as unknown[])
           .filter((t): t is string => typeof t === "string")
@@ -622,15 +597,7 @@ export function createApp(
       runManager.add(run);
       runIds.push(run.id);
 
-      const runOptions: {
-        headed?: boolean;
-        baseUrl?: string;
-        timeoutMs?: number;
-      } = {};
-      if (headed !== undefined) runOptions.headed = headed;
-      if (reqBaseUrl !== undefined) runOptions.baseUrl = reqBaseUrl;
-      if (timeoutMs !== undefined) runOptions.timeoutMs = timeoutMs;
-      void executeRun(run, suite.spec, runManager, runOptions);
+      void executeRun(run, suite.spec, runManager);
     }
 
     res.status(201).json({ runIds });
@@ -685,7 +652,6 @@ async function executeRun(
   run: RunRecord,
   spec: Spec,
   manager: RunManager,
-  options: { headed?: boolean; baseUrl?: string; timeoutMs?: number },
 ): Promise<void> {
   const startTime = Date.now();
   manager.update(run.id, { status: "running" });
@@ -738,14 +704,9 @@ async function executeRun(
 
   if (!compiledOk) return;
 
-  // Execute the spec
+  // Execute the spec (no overrides — baseUrl/headed/timeout come from spec + env only)
   try {
-    const runOpts: Parameters<typeof runSpec>[1] = { skipValidation: true };
-    if (options.headed !== undefined) runOpts.headed = options.headed;
-    if (options.baseUrl !== undefined) runOpts.baseUrl = options.baseUrl;
-    if (options.timeoutMs !== undefined) runOpts.timeoutMs = options.timeoutMs;
-
-    const result = await runSpec(spec, runOpts);
+    const result = await runSpec(spec, { skipValidation: true });
     manager.update(run.id, {
       status: result.status === "pass" ? "pass" : "fail",
       finishedAt: new Date().toISOString(),

@@ -14,7 +14,7 @@ src/
   context.ts         Runtime save/ref store with dot-path resolution
   reporter.ts        Console + JSON output
   loader.ts          Shared glob resolution and spec file loading (used by CLI and server)
-  cli.ts             CLI: ortheon run <glob>, ortheon expand <file>, ortheon serve <glob> [--port] [--base-url]
+  cli.ts             CLI: ortheon run <glob>, ortheon expand <file>, ortheon serve <glob> [--port]
   index.ts           Public API re-exports
   executors/
     browser.ts       Playwright wrapper (9 actions)

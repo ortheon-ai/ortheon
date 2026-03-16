@@ -9,7 +9,7 @@
  * the ortheon server and reports results.
  *
  * ORTHEON_SERVER_URL is set so specs know where to call the server API.
- * APP_BASE_URL is set so the health suite can actually run.
+ * DEMO_BASE_URL is set so the health suite can actually run.
  */
 
 import { startServer as startDemoServer } from '../demo/server.ts'
@@ -25,9 +25,9 @@ const ORTHEON_BASE_URL = `http://localhost:${ORTHEON_PORT}`
 const SPEC_GLOB = 'examples/specs/**/*.ortheon.ts'
 
 // Configure environment for all specs.
-// APP_BASE_URL is the demo app (target for health/order specs).
+// DEMO_BASE_URL is the demo app (target for health/order specs).
 // ORTHEON_SERVER_URL is the ortheon web server (target for server self-tests).
-process.env['APP_BASE_URL'] ??= DEMO_BASE_URL
+process.env['DEMO_BASE_URL'] ??= DEMO_BASE_URL
 process.env['ORTHEON_SERVER_URL'] ??= ORTHEON_BASE_URL
 process.env['E2E_USER_PASSWORD'] ??= 'password123'
 process.env['E2E_USER_EMAIL'] ??= 'buyer@example.com'

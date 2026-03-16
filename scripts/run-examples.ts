@@ -9,7 +9,7 @@ import type { SpecResult } from '../src/types.ts'
 const BASE_URL = 'http://localhost:3737'
 
 // Set up environment defaults for demo
-process.env['APP_BASE_URL'] ??= BASE_URL
+process.env['DEMO_BASE_URL'] ??= BASE_URL
 process.env['E2E_USER_PASSWORD'] ??= 'password123'
 process.env['E2E_USER_EMAIL'] ??= 'buyer@example.com'
 process.env['E2E_ADMIN_EMAIL'] ??= 'admin@example.com'

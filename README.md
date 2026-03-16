@@ -8,7 +8,7 @@ Ortheon describes long behavioral flows over real systems using only two executa
 
 ```ts
 export default spec("guest order via API", {
-  baseUrl: env("APP_BASE_URL"),
+  baseUrl: env("MY_APP_URL"),
   apis: { ...authApi, ...ordersApi },
   data: { product: products.defaultWidget },
 
@@ -159,7 +159,7 @@ import { loginFlow } from "../flows/login.js";
 import { users } from "../data/users.js";
 
 export default spec("authenticated checkout", {
-  baseUrl: env("APP_BASE_URL"),
+  baseUrl: env("MY_APP_URL"),
   apis: { ...ordersApi },
   data: { user: users.standardBuyer },
   library: [loginFlow],
@@ -210,7 +210,7 @@ export default spec("authenticated checkout", {
 ### 5. Run it
 
 ```bash
-APP_BASE_URL=http://localhost:3000 ortheon run 'specs/**/*.ortheon.ts'
+MY_APP_URL=http://localhost:3000 ortheon run 'specs/**/*.ortheon.ts'
 ```
 
 ## CLI
@@ -223,7 +223,6 @@ Run spec files matching a glob pattern.
 
 | Flag                | Description             | Default   |
 | ------------------- | ----------------------- | --------- |
-| `--base-url <url>`  | Override spec `baseUrl` | --        |
 | `--reporter <type>` | `console` or `json`     | `console` |
 | `--headed`          | Show the browser window | --        |
 | `--timeout <ms>`    | Default step timeout    | `30000`   |
@@ -235,7 +234,7 @@ Print the fully expanded execution plan for a spec. All `use()` calls inlined, a
 
 ```
 SPEC: authenticated checkout
-BASE URL: env("APP_BASE_URL")
+BASE URL: env("MY_APP_URL")
 
 STEPS (11 total):
     1. [api authentication] acquire api token (flow: checkout)
@@ -253,22 +252,16 @@ STEPS (11 total):
 Start a local web server for browsing, expanding, and running specs interactively.
 
 ```bash
-ortheon serve 'specs/**/*.ortheon.ts' --port 4000 --base-url http://localhost:3000
+ortheon serve 'specs/**/*.ortheon.ts' --port 4000
 ```
 
 | Flag               | Description                                             | Default  |
 | ------------------ | ------------------------------------------------------- | -------- |
 | `--port <port>`    | Port to listen on                                       | `4000`   |
-| `--base-url <url>` | Sets `APP_BASE_URL` env var for spec runs               | --       |
 
-**Environment variables set automatically:**
+Each spec resolves its own `baseUrl` from whichever `env()` key it declares. Set the required environment variables before starting the server.
 
-| Variable             | Value                         | Purpose                                      |
-| -------------------- | ----------------------------- | -------------------------------------------- |
-| `APP_BASE_URL`       | value of `--base-url`         | Picked up by specs using `env('APP_BASE_URL')` |
-| `ORTHEON_SERVER_URL` | `http://localhost:<port>`     | Picked up by server self-test specs          |
-
-Specs resolve their own `baseUrl` from whichever env var they declare. The `--base-url` flag does not override a spec's `baseUrl` globally -- it sets `APP_BASE_URL` in the environment so specs that opt into it can pick it up.
+`ORTHEON_SERVER_URL` is set automatically to `http://localhost:<port>` so server self-test specs can reach the Ortheon API.
 
 ## Web server
 
@@ -295,7 +288,7 @@ All under `/api`. Suite IDs are base64url-encoded relative file paths.
 | GET    | `/api/runs`               | List all runs (summaries)                       |
 | GET    | `/api/runs/:id`           | Full run detail with per-flow, per-step results |
 
-POST body for `/run` (all optional): `{ headed?, baseUrl?, timeoutMs? }`.
+POST `/api/suites/:id/run` and POST `/api/run-all` accept an optional JSON body. No run overrides (e.g. `baseUrl`, `headed`, `timeoutMs`) are accepted — the server uses the spec and process environment only (security). For run-all, body may include `{ excludeTags?: string[] }` to skip suites with those tags.
 
 `GET /api/runs/:id` returns a `flows` array that mirrors the authored top-level flows in the spec. Each flow entry contains its steps, pass/fail/skip counts, and the original flow name.
 
@@ -307,10 +300,10 @@ Runs are stored in memory only (lost on restart). The last 100 runs are retained
 
 ```bash
 # Terminal 1: start the app under test
-APP_BASE_URL=http://localhost:3000 npm run dev
+npm run dev
 
 # Terminal 2: start the ortheon server
-APP_BASE_URL=http://localhost:3000 ortheon serve 'specs/**/*.ortheon.ts' --base-url http://localhost:3000
+MY_APP_URL=http://localhost:3000 ortheon serve 'specs/**/*.ortheon.ts'
 
 # Open http://localhost:4000
 ```
@@ -412,7 +405,7 @@ No wildcards. No filters. No JSONPath. No recursive descent.
 
 ```ts
 spec('name', {
-  baseUrl: env('APP_BASE_URL'),               // required
+  baseUrl: env('MY_APP_URL'),                  // required
   apis: { ...ordersApi, ...paymentsApi },      // shared contract catalogs
   data: { user: users.standardBuyer },         // data catalog bindings
   tags: ['checkout', 'critical'],              // metadata
