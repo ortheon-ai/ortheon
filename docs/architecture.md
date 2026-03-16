@@ -182,6 +182,57 @@ Five matchers. `deepEqual` for structural comparison. `isSubset` for object `con
 
 Console reporter prints section-grouped output with pass/fail icons and durations. JSON reporter emits the full `SpecResult` structure. `consoleSummary` prints a multi-spec summary line.
 
+## Server layer
+
+`src/server/app.ts` provides a web interface over the same compilation and execution primitives the CLI uses.
+
+```
+┌─────────────────────────┐
+│      Server Layer       │
+│  src/server/app.ts      │  Express app, suite discovery, run management
+│  src/server/pages/      │  Thin SPA (HTML + CSS + vanilla JS)
+└────────────┬────────────┘
+             │  calls compile(), validate(), runSpec()
+┌────────────▼────────────┐
+│   Compilation + Exec.   │
+│  (same as CLI)          │
+└─────────────────────────┘
+```
+
+### Suite discovery
+
+`discoverSuites()` runs once at startup against the glob passed to `ortheon serve`. Each matched file is dynamically imported (`import(path)`), the default export is compiled and validated, and a summary is cached. Suite IDs are base64url-encoded relative file paths -- stable and URL-safe.
+
+### Run manager (`RunManager`)
+
+In-memory ring buffer of up to 100 runs, keyed by UUID. Runs move through three states:
+
+```
+pending --> running --> completed | error
+```
+
+`executeRun()` is fire-and-forget: the POST responds with `{ runId }` immediately and the run executes asynchronously. Callers poll `GET /api/runs/:id` until `status` is no longer `running`.
+
+Runs are lost on server restart. If the server is being used as ephemeral infrastructure (CI), this is fine. Persistence is out of scope.
+
+### API surface
+
+Six routes. All paths return JSON. Suite endpoints always reload the spec file at request time for metadata accuracy. The plan endpoint reruns compilation to compute the expanded step list.
+
+The POST `/api/suites/:id/run` body accepts three optional overrides (`headed`, `baseUrl`, `timeoutMs`). If `baseUrl` is omitted, the spec resolves it from environment variables (`APP_BASE_URL`, or whichever `env()` key it declares). The server never injects a base URL globally -- each spec owns its own resolution.
+
+### SPA (`src/server/pages/`)
+
+Three views rendered client-side with History API routing, all driven by `data-testid` attributes so the UI can be tested with Ortheon's own browser steps.
+
+| View       | Route             | What it shows                                    |
+| ---------- | ----------------- | ------------------------------------------------ |
+| Dashboard  | `/`               | Suite cards (name, step count, tags)             |
+| Detail     | `/suites/:id`     | Metadata, expanded plan, validation errors, Run  |
+| Run        | `/runs/:id`       | Step-by-step results with live polling           |
+
+The SPA is a static delivery mechanism only. All behavioral logic lives in the API.
+
 ## Key design decisions
 
 ### `existsCheck()` for inline body expectations

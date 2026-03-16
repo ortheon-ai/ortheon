@@ -16,23 +16,26 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "tsc --watch",
+    "watch": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "demo": "tsx demo/server.ts",
+    "dev": "tsx demo/server.ts & APP_BASE_URL=http://localhost:3737 E2E_USER_EMAIL=buyer@example.com E2E_USER_PASSWORD=password123 E2E_ADMIN_EMAIL=admin@example.com E2E_ADMIN_PASSWORD=adminpass tsx src/cli.ts serve 'examples/specs/**/*.ortheon.ts' --base-url http://localhost:3737",
     "examples": "tsx scripts/run-examples.ts",
+    "serve": "tsx src/cli.ts serve 'examples/specs/**/*.ortheon.ts'",
+    "server-tests": "tsx scripts/run-server-tests.ts",
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
     "prepublishOnly": "npm test && npm run build"
   },
   "dependencies": {
     "commander": "^12.1.0",
+    "express": "^4.21.1",
     "playwright": "^1.49.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.0",
-    "express": "^4.21.1",
     "husky": "^9.1.7",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",

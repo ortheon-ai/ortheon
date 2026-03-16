@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
-import { resolve, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
 import { compile, formatExpandedPlan } from './compiler.js'
 import { validate } from './validator.js'
 import { runSpec } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
+import { resolveGlob, loadSpecFile } from './loader.js'
 import type { Spec, SpecResult } from './types.js'
 
 const packageJson = JSON.parse(
@@ -48,7 +47,7 @@ program
     let anyFailed = false
 
     for (const file of files) {
-      const spec = await loadSpec(file)
+      const spec = await loadSpecForCli(file)
       if (!spec) continue
 
       try {
@@ -89,12 +88,11 @@ program
   .command('expand <file>')
   .description('Print the fully expanded execution plan for a spec file')
   .action(async (file: string) => {
-    const spec = await loadSpec(file)
+    const spec = await loadSpecForCli(file)
     if (!spec) process.exit(1)
 
     const plan = compile(spec)
 
-    // Run pass 1 validation and report issues
     const validation = validate(spec, plan)
     if (!validation.valid) {
       console.error('Validation errors:')
@@ -115,83 +113,64 @@ program
   })
 
 // ---------------------------------------------------------------------------
+// ortheon serve <glob>
+// ---------------------------------------------------------------------------
+
+program
+  .command('serve <glob>')
+  .description('Start the Ortheon web server for browsing and running specs')
+  .option('--port <port>', 'Port to listen on', '4000')
+  .option('--base-url <url>', 'Default base URL for running specs (also reads APP_BASE_URL env var)')
+  .action(async (glob: string, options: {
+    port: string
+    baseUrl?: string
+  }) => {
+    const port = parseInt(options.port, 10)
+    if (isNaN(port) || port < 1 || port > 65535) {
+      console.error(`Invalid port: ${options.port}`)
+      process.exit(1)
+    }
+
+    const cwd = process.cwd()
+    const serverUrl = `http://localhost:${port}`
+
+    // Set environment variables so specs can resolve their own base URLs.
+    // --base-url sets APP_BASE_URL (the target app under test).
+    // ORTHEON_SERVER_URL is always set to this server's own address so
+    // specs like run-suites.ortheon.ts can call the ortheon API directly.
+    if (options.baseUrl !== undefined) {
+      process.env['APP_BASE_URL'] ??= options.baseUrl
+    }
+    process.env['ORTHEON_SERVER_URL'] ??= serverUrl
+
+    const { discoverSuites, startServer } = await import('./server/app.js')
+
+    console.log(`Discovering specs matching: ${glob}`)
+    const suites = await discoverSuites(glob, cwd)
+
+    if (suites.length === 0) {
+      console.error(`No spec files found matching: ${glob}`)
+      process.exit(1)
+    }
+
+    // Do not pass baseUrlOverride -- each spec resolves its own base URL
+    // from its env() references (APP_BASE_URL, ORTHEON_SERVER_URL, etc.).
+    // POST /api/suites/:id/run body.baseUrl can still override per-run.
+    await startServer(suites, port)
+  })
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function loadSpec(file: string): Promise<Spec | null> {
-  const absPath = resolve(file)
-  const fileUrl = pathToFileURL(absPath).href
-  try {
-    const mod = await import(fileUrl) as { default?: Spec } | Spec
-    const spec = (mod as { default?: Spec }).default ?? (mod as Spec)
-    if (!spec || typeof spec !== 'object' || !('flows' in spec)) {
-      console.error(`File "${file}" does not export a valid Ortheon spec (expected a default export from spec(...))`)
-      return null
-    }
-    return spec
-  } catch (err) {
+async function loadSpecForCli(file: string): Promise<Spec | null> {
+  const result = await loadSpecFile(file)
+  if (result.error !== null) {
     console.error(`Failed to load spec file "${file}":`)
-    console.error(err instanceof Error ? err.message : String(err))
+    console.error(result.error)
     return null
   }
-}
-
-async function resolveGlob(pattern: string): Promise<string[]> {
-  // Use Node 22+ glob, or fall back to manual resolution
-  // For Node 20 compatibility, we do simple directory + extension matching
-  const fsPromises = await import('node:fs/promises').catch(() => null)
-  const glob = fsPromises !== null ? (fsPromises as unknown as { glob?: unknown }).glob ?? null : null
-
-  // Try native glob (Node 22+)
-  if (glob && typeof (glob as unknown) === 'function') {
-    try {
-      const files: string[] = []
-      for await (const f of (glob as (p: string) => AsyncIterable<string>)(pattern)) {
-        files.push(f)
-      }
-      return files
-    } catch {
-      // fall through to manual
-    }
-  }
-
-  // Manual glob for Node 20: expand simple patterns
-  return manualGlob(pattern)
-}
-
-async function manualGlob(pattern: string): Promise<string[]> {
-  const { readdirSync, statSync } = await import('node:fs')
-  const path = await import('node:path')
-
-  // If it's a direct file path
-  try {
-    const stat = statSync(pattern)
-    if (stat.isFile()) return [pattern]
-  } catch { /* not a direct file */ }
-
-  // Simple recursive directory + suffix matching
-  const suffix = pattern.includes('*') ? pattern.split('*').pop() ?? '' : ''
-  const baseDir = pattern.includes('/')
-    ? pattern.split('*')[0]?.replace(/\/$/, '') ?? '.'
-    : '.'
-
-  const files: string[] = []
-  function walk(dir: string): void {
-    try {
-      const entries = readdirSync(dir, { withFileTypes: true })
-      for (const entry of entries) {
-        const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) {
-          walk(full)
-        } else if (entry.isFile() && (suffix ? full.endsWith(suffix) : true)) {
-          files.push(full)
-        }
-      }
-    } catch { /* skip unreadable dirs */ }
-  }
-
-  walk(baseDir)
-  return files
+  return result.spec
 }
 
 program.parse()
