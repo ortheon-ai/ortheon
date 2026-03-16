@@ -312,13 +312,13 @@ spec('checkout', {
 Specs reference environment variables through `env()` and `secret()`:
 
 ```ts
-baseUrl: env('APP_BASE_URL')
+baseUrl: env('MY_APP_URL')
 ```
 
 Set them before running:
 
 ```bash
-APP_BASE_URL=http://localhost:3000 \
+MY_APP_URL=http://localhost:3000 \
 E2E_USER_EMAIL=buyer@example.com \
 E2E_USER_PASSWORD=password123 \
 ortheon run 'specs/**/*.ortheon.ts'

@@ -7,7 +7,7 @@ import { serverApi } from '../../contracts/server.js'
 //   ortheon serve examples/specs/**/*.ortheon.ts
 //
 // ORTHEON_SERVER_URL must be set (e.g. http://localhost:4000).
-// APP_BASE_URL must also be set so the health spec has a baseUrl to run against.
+// DEMO_BASE_URL must also be set so the health spec has a baseUrl to run against.
 //
 // The health suite is used as the known target suite because it is fast,
 // API-only, and has a predictable pass outcome.

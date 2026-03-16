@@ -20,7 +20,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "demo": "tsx demo/server.ts",
-    "dev": "tsx demo/server.ts & APP_BASE_URL=http://localhost:3737 E2E_USER_EMAIL=buyer@example.com E2E_USER_PASSWORD=password123 E2E_ADMIN_EMAIL=admin@example.com E2E_ADMIN_PASSWORD=adminpass tsx src/cli.ts serve 'examples/specs/**/*.ortheon.ts' --base-url http://localhost:3737",
+    "dev": "tsx demo/server.ts & DEMO_BASE_URL=http://localhost:3737 E2E_USER_EMAIL=buyer@example.com E2E_USER_PASSWORD=password123 E2E_ADMIN_EMAIL=admin@example.com E2E_ADMIN_PASSWORD=adminpass tsx src/cli.ts serve 'examples/specs/**/*.ortheon.ts'",
     "examples": "tsx scripts/run-examples.ts",
     "serve": "tsx src/cli.ts serve 'examples/specs/**/*.ortheon.ts'",
     "server-tests": "tsx scripts/run-server-tests.ts",

@@ -2,7 +2,7 @@ import { spec, flow, step, api, expect, ref, env } from '../../../src/dsl.js'
 import { healthApi } from '../../contracts/orders.js'
 
 export default spec('service health check', {
-  baseUrl: env('APP_BASE_URL'),
+  baseUrl: env('DEMO_BASE_URL'),
   apis: {
     ...healthApi,
   },

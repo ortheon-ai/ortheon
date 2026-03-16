@@ -15,7 +15,7 @@ import { products } from '../../data/products.js'
 // Auth is explicit: browser login is browser-only.
 // API calls use a token acquired through a separate login API step.
 export default spec('authenticated checkout creates persistent order', {
-  baseUrl: env('APP_BASE_URL'),
+  baseUrl: env('DEMO_BASE_URL'),
   apis: {
     ...authApi,
     ...ordersApi,

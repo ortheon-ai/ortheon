@@ -429,13 +429,23 @@ async function renderRunsList() {
     <div>
       ${renderTabBar('runs')}
       <div class="tab-content-header">
-        <div class="section-subtitle">${runs.length} run${runs.length !== 1 ? 's' : ''} (most recent first)</div>
+        <div class="filter-bar">
+          <div class="filter-bar-row">
+            <div class="section-subtitle">${runs.length} run${runs.length !== 1 ? 's' : ''} (most recent first)</div>
+            <button class="btn btn-secondary" id="refresh-runs-btn" data-testid="refresh-runs-button">↻ Refresh</button>
+          </div>
+        </div>
       </div>
       <div class="runs-list" data-testid="runs-list">
         ${rows}
       </div>
     </div>
   `)
+
+  const refreshBtn = root.querySelector('#refresh-runs-btn')
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => renderRunsList())
+  }
 }
 
 // ---------------------------------------------------------------------------

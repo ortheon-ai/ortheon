@@ -273,7 +273,7 @@ function resolveBaseUrl(plan: ExecutionPlan, spec: Spec): string {
 
   throw new Error(
     `No baseUrl configured for spec "${spec.name}".\n` +
-    'Set APP_BASE_URL environment variable or pass --base-url to the CLI.'
+    'Set the appropriate environment variable for the env() key declared in the spec.'
   )
 }
 

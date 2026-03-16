@@ -238,7 +238,7 @@ Six routes. All paths return JSON. Suite endpoints always reload the spec file a
 
 Results are always sorted lexically by relative file path, which gives stable ordering across requests and makes test assertions against `suites[0]` reliable.
 
-The POST `/api/suites/:id/run` body accepts three optional overrides (`headed`, `baseUrl`, `timeoutMs`). If `baseUrl` is omitted, the spec resolves it from environment variables (`APP_BASE_URL`, or whichever `env()` key it declares). The server never injects a base URL globally -- each spec owns its own resolution.
+The POST `/api/suites/:id/run` body accepts three optional overrides (`headed`, `baseUrl`, `timeoutMs`). If `baseUrl` is omitted, the spec resolves it from whichever `env()` key it declares. The server never injects a base URL globally -- each spec owns its own resolution.
 
 `GET /api/runs/:id` returns a `flows` array that preserves the authored top-level flow structure from the spec (via the `flowRanges` in the compiled plan). Each flow entry contains its original name, its steps, and pass/fail/skip counts.
 
