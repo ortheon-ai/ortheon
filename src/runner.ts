@@ -172,7 +172,7 @@ async function executeStep(
   ctx: RuntimeContext,
   baseUrl: string,
   browserSession: BrowserSession | null,
-  _options: RunOptions
+  options: RunOptions
 ): Promise<void> {
   const action = step.action
 
@@ -188,7 +188,8 @@ async function executeStep(
         ...(apiAction.options.body !== undefined ? { body: apiAction.options.body } : {}),
       },
       baseUrl,
-      ctx
+      ctx,
+      options.timeoutMs
     )
 
     // Process inline expectations
@@ -230,7 +231,12 @@ async function executeStep(
 
   if (action.__type === 'expect') {
     for (const expectation of step.expects) {
-      const actual = ctx.resolveDeep(expectation.value)
+      // exists/notExists matchers check for value presence or absence, so refs must
+      // resolve gracefully (ctx.get, not ctx.require) -- a missing path IS the expected
+      // state for notExists and should not throw before the matcher runs.
+      const actual = isExistenceMatcher(expectation.matcher)
+        ? resolveRefSoft(expectation.value, ctx)
+        : ctx.resolveDeep(expectation.value)
       const expected = expectation.expected !== undefined
         ? ctx.resolveDeep(expectation.expected)
         : undefined
@@ -267,4 +273,20 @@ function resolveBaseUrl(plan: ExecutionPlan, spec: Spec): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function isExistenceMatcher(matcher: string): boolean {
+  return matcher === 'exists' || matcher === 'notExists'
+}
+
+/** Resolve a value, but for ref() use ctx.get() instead of ctx.require() so that a
+ *  missing nested path returns undefined rather than throwing. Used for exists/notExists. */
+function resolveRefSoft(value: unknown, ctx: RuntimeContext): unknown {
+  if (
+    typeof value === 'object' && value !== null &&
+    (value as { __type?: string }).__type === 'ref'
+  ) {
+    return ctx.get((value as { path: string }).path)
+  }
+  return ctx.resolveDeep(value)
 }

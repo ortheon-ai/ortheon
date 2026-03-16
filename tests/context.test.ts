@@ -124,6 +124,10 @@ describe('RuntimeContext', () => {
     it('extracts a header', () => {
       expect(ctx.extractFromResponse('headers.x-request-id', response)).toBe('req-abc')
     })
+
+    it('throws for an unrecognised save path prefix', () => {
+      expect(() => ctx.extractFromResponse('something.weird', response)).toThrow('Invalid save path')
+    })
   })
 
   describe('loadData', () => {

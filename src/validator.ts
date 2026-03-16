@@ -5,6 +5,7 @@ import type {
   ExecutableStep,
   ExecutionPlan,
   ExpectStep,
+  Flow,
   FlowItem,
   MatcherName,
   RefValue,
@@ -44,14 +45,25 @@ const MATCHERS_NO_EXPECTED = new Set<MatcherName>([
   'exists', 'notExists',
 ])
 
-const SAVE_PATH_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*(\[\d+\])*([.][a-zA-Z_][a-zA-Z0-9_.]*(\[\d+\])*)*$/
+// Valid save NAME: the context store key (dot-notation + bracket indexing only, no dashes).
+const SAVE_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*(\[\d+\])*([.][a-zA-Z_][a-zA-Z0-9_.]*(\[\d+\])*)*$/
+
+// Valid save PATH: the runtime source expression.
+// Accepted: "body", "status", "body.<dot-path>", "headers.<header-name>"
+// Header names are case-insensitive and may contain letters, digits, and hyphens.
+function isValidSavePath(path: string): boolean {
+  if (path === 'body' || path === 'status') return true
+  if (path.startsWith('body.')) return SAVE_NAME_RE.test(path.slice(5))
+  if (path.startsWith('headers.')) return /^headers\.[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(path)
+  return false
+}
 
 function isSection(item: FlowItem): item is Section {
   return (item as Section).__type === 'section'
 }
 
-function validateSavePath(path: string): boolean {
-  return SAVE_PATH_RE.test(path)
+function validateSaveName(name: string): boolean {
+  return SAVE_NAME_RE.test(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +80,8 @@ export function validateStructure(spec: Spec): ValidationResult {
   // Collect all flow names: both library flows and top-level flows (needed for use() validation)
   const allFlows = [...(spec.library ?? []), ...spec.flows]
 
+  const flowMap = new Map<string, Flow>()
+
   for (const flow of allFlows) {
     if (flowNames.has(flow.name)) {
       errors.push({
@@ -76,6 +90,7 @@ export function validateStructure(spec: Spec): ValidationResult {
       })
     }
     flowNames.add(flow.name)
+    flowMap.set(flow.name, flow)
   }
 
   for (const flow of allFlows) {
@@ -96,7 +111,7 @@ export function validateStructure(spec: Spec): ValidationResult {
       stepNames.add(step.name)
 
       // Validate the step action
-      validateStepAction(step, apis, flowNames, location, errors, warnings)
+      validateStepAction(step, apis, flowNames, flowMap, location, errors, warnings)
     }
   }
 
@@ -123,6 +138,7 @@ function validateStepAction(
   step: Step,
   apis: Record<string, import('./types.js').ApiContract>,
   flowNames: Set<string>,
+  flowMap: Map<string, Flow>,
   location: string,
   errors: Diagnostic[],
   warnings: Diagnostic[]
@@ -150,15 +166,14 @@ function validateStepAction(
             location: stepLocation,
           })
         } else {
-          for (const [saveName, savePath] of Object.entries(opts.save as Record<string, string>)) {
-            if (!validateSavePath(saveName)) {
+          for (const [saveName] of Object.entries(opts.save as Record<string, string>)) {
+            if (!validateSaveName(saveName)) {
               errors.push({
                 severity: 'error',
                 message: `Invalid save name "${saveName}" in ${stepLocation}. Use dot notation + bracket indexing only.`,
                 location: stepLocation,
               })
             }
-            void savePath // save path for extract is the source type (text/value/html/attr:X), not validated here
           }
         }
       }
@@ -178,20 +193,20 @@ function validateStepAction(
         })
       }
 
-      // Validate save paths
+      // Validate save names and paths
       if (apiAction.options.save) {
         for (const [saveName, savePath] of Object.entries(apiAction.options.save)) {
-          if (!validateSavePath(saveName)) {
+          if (!validateSaveName(saveName)) {
             errors.push({
               severity: 'error',
-              message: `Invalid save name "${saveName}" in ${stepLocation}`,
+              message: `Invalid save name "${saveName}" in ${stepLocation}. Use dot notation + bracket indexing only.`,
               location: stepLocation,
             })
           }
-          if (!validateSavePath(savePath) && savePath !== 'body' && savePath !== 'status') {
+          if (!isValidSavePath(savePath)) {
             warnings.push({
               severity: 'warning',
-              message: `Save path "${savePath}" in ${stepLocation} may not be valid dot-notation`,
+              message: `Save path "${savePath}" in ${stepLocation} is not a recognised source expression. Use "body", "status", "body.<path>", or "headers.<name>".`,
               location: stepLocation,
             })
           }
@@ -228,9 +243,28 @@ function validateStepAction(
           location: stepLocation,
         })
       } else {
-        // Check input completeness -- would need access to flow definitions
-        // This is done in a separate structural check below
-        void warnings
+        // Check that all declared inputs are provided and no undeclared inputs are passed
+        const referencedFlow = flowMap.get(useAction.flow)
+        const declaredInputs = Object.keys(referencedFlow?.inputs ?? {})
+        const providedInputs = Object.keys(useAction.inputs ?? {})
+        for (const required of declaredInputs) {
+          if (!providedInputs.includes(required)) {
+            errors.push({
+              severity: 'error',
+              message: `use("${useAction.flow}") is missing required input "${required}" in ${stepLocation}`,
+              location: stepLocation,
+            })
+          }
+        }
+        for (const extra of providedInputs) {
+          if (!declaredInputs.includes(extra)) {
+            warnings.push({
+              severity: 'warning',
+              message: `use("${useAction.flow}") provides undeclared input "${extra}" in ${stepLocation}`,
+              location: stepLocation,
+            })
+          }
+        }
       }
       break
     }

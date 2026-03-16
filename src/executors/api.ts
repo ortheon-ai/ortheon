@@ -37,7 +37,8 @@ function buildUrl(baseUrl: string, path: string, query?: Record<string, string>)
 export async function executeApiCall(
   call: ResolvedApiCall,
   baseUrl: string,
-  context: RuntimeContext
+  context: RuntimeContext,
+  timeoutMs?: number
 ): Promise<ApiResponse> {
   // Resolve dynamic values in params, query, headers, body
   const resolvedParams = call.params
@@ -71,6 +72,7 @@ export async function executeApiCall(
       Accept: 'application/json',
       ...resolvedHeaders,
     },
+    ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   }
 
   if (resolvedBody !== undefined) {
