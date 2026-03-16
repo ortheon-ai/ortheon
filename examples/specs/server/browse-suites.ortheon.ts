@@ -261,6 +261,12 @@ export default spec('ortheon server: browse and expand', {
           step('wait for suite list to appear',
             browser('waitFor', { target: '[data-testid="suite-list"]', state: 'visible' })
           ),
+          step('runs tab is visible',
+            browser('waitFor', { target: '[data-testid="runs-tab"]', state: 'visible' })
+          ),
+          step('search input is visible',
+            browser('waitFor', { target: '[data-testid="search-input"]', state: 'visible' })
+          ),
           step('extract first suite id from dashboard',
             browser('extract', {
               target: '[data-testid="suite-card"]:first-child',

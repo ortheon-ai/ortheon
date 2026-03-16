@@ -7,7 +7,7 @@ import { compile, formatExpandedPlan } from '../compiler.js'
 import { validate } from '../validator.js'
 import { runSpec } from '../runner.js'
 import { loadSpecFile } from '../loader.js'
-import type { Spec, SpecResult, ExecutableStep, BrowserStep, ApiContract } from '../types.js'
+import type { Spec, SpecResult, SpecExpectedOutcome, ExecutableStep, BrowserStep, ApiContract } from '../types.js'
 
 const __serverDir = dirname(fileURLToPath(import.meta.url))
 
@@ -38,6 +38,15 @@ export type ServerSuite = {
 
 type RunStatus = 'pending' | 'running' | 'pass' | 'fail' | 'error'
 
+type PlanStepSnapshot = {
+  index: number
+  actionType: string
+  actionSummary: string
+  saves: string[]
+  expects: string[]
+  flowOrigin: string | null
+}
+
 type RunRecord = {
   id: string
   suiteId: string
@@ -49,6 +58,12 @@ type RunRecord = {
   error: string | null
   validation: { errors: string[]; warnings: string[] } | null
   result: SpecResult | null
+  // Intentional historical capture: records the execution plan metadata at run time
+  // so historical runs remain accurate even if the underlying spec changes later.
+  planSnapshot: PlanStepSnapshot[] | null
+  // Captured from the spec at run creation time so the run can be interpreted
+  // correctly even if the spec's expectedOutcome changes later.
+  expectedOutcome: SpecExpectedOutcome
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +101,16 @@ export class RunManager {
   update(id: string, updates: Partial<RunRecord>): void {
     const run = this.runs.get(id)
     if (run !== undefined) Object.assign(run, updates)
+  }
+
+  lastRunForSuite(suiteId: string): RunRecord | undefined {
+    for (let i = this.order.length - 1; i >= 0; i--) {
+      const id = this.order[i]
+      if (id === undefined) continue
+      const run = this.runs.get(id)
+      if (run !== undefined && run.suiteId === suiteId) return run
+    }
+    return undefined
   }
 
   size(): number {
@@ -133,16 +158,26 @@ function formatExpectSummaries(step: ExecutableStep): string[] {
 // ---------------------------------------------------------------------------
 
 function mapRunToResponse(run: RunRecord): object {
+  let stepIdx = 0
   const flows = run.result !== null
     ? run.result.flows.map(f => ({
         name: f.name,
-        steps: f.steps.map(s => ({
-          name: s.name,
-          section: s.section ?? null,
-          status: s.status as 'pass' | 'fail' | 'skip',
-          durationMs: s.durationMs,
-          error: s.error ?? null,
-        })),
+        steps: f.steps.map(s => {
+          const snap = run.planSnapshot?.[stepIdx]
+          stepIdx++
+          return {
+            name: s.name,
+            section: s.section ?? null,
+            flowOrigin: s.flowOrigin ?? null,
+            status: s.status as 'pass' | 'fail' | 'skip',
+            durationMs: s.durationMs,
+            error: s.error ?? null,
+            actionType: snap?.actionType ?? null,
+            actionSummary: snap?.actionSummary ?? null,
+            saves: snap?.saves ?? [],
+            expects: snap?.expects ?? [],
+          }
+        }),
         passed: f.passed,
         failed: f.failed,
         skipped: f.skipped,
@@ -154,6 +189,8 @@ function mapRunToResponse(run: RunRecord): object {
     suiteId: run.suiteId,
     suiteName: run.suiteName,
     status: run.status,
+    expectedOutcome: run.expectedOutcome,
+    meetsExpectedOutcome: run.status === run.expectedOutcome,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     durationMs: run.durationMs,
@@ -241,14 +278,24 @@ export function createApp(
       return true
     })
 
-    const result = filtered.map(s => ({
-      id: s.id,
-      name: s.name,
-      path: s.relativePath,
-      flowCount: s.spec !== null ? s.spec.flows.length : 0,
-      tags: s.spec !== null ? (s.spec.tags ?? []) : [],
-      hasError: s.loadError !== null,
-    }))
+    const result = filtered.map(s => {
+      const lastRun = runManager.lastRunForSuite(s.id)
+      return {
+        id: s.id,
+        name: s.name,
+        path: s.relativePath,
+        flowCount: s.spec !== null ? s.spec.flows.length : 0,
+        tags: s.spec !== null ? (s.spec.tags ?? []) : [],
+        hasError: s.loadError !== null,
+        expectedOutcome: s.spec?.expectedOutcome ?? 'pass',
+        lastRun: lastRun !== undefined ? {
+          id: lastRun.id,
+          status: lastRun.status,
+          startedAt: lastRun.startedAt,
+          durationMs: lastRun.durationMs,
+        } : null,
+      }
+    })
     res.json({ suites: result })
   })
 
@@ -276,6 +323,7 @@ export function createApp(
       apiNames: Object.keys(spec.apis ?? {}),
       tags: spec.tags ?? [],
       safety: spec.safety ?? null,
+      expectedOutcome: spec.expectedOutcome ?? 'pass',
     })
   })
 
@@ -325,6 +373,11 @@ export function createApp(
       specName: plan.specName,
       baseUrl: baseUrlStr,
       steps,
+      flowRanges: plan.flowRanges.map(r => ({
+        name: r.name,
+        startIndex: r.startIndex,
+        stepCount: r.stepCount,
+      })),
       validation: {
         errors: validation.errors.map(e => e.message),
         warnings: validation.warnings.map(w => w.message),
@@ -399,12 +452,14 @@ export function createApp(
         suiteId: suite.id,
         suiteName: suite.name,
         status: 'error',
+        expectedOutcome: 'pass',
         startedAt: new Date().toISOString(),
         finishedAt: new Date().toISOString(),
         durationMs: 0,
         error: suite.loadError ?? 'Failed to load spec',
         validation: null,
         result: null,
+        planSnapshot: null,
       }
       runManager.add(run)
       res.status(201).json({ runId: run.id })
@@ -416,12 +471,14 @@ export function createApp(
       suiteId: suite.id,
       suiteName: suite.spec.name,
       status: 'pending',
+      expectedOutcome: suite.spec.expectedOutcome ?? 'pass',
       startedAt: new Date().toISOString(),
       finishedAt: null,
       durationMs: null,
       error: null,
       validation: null,
       result: null,
+      planSnapshot: null,
     }
     runManager.add(run)
 
@@ -446,6 +503,8 @@ export function createApp(
       suiteId: r.suiteId,
       suiteName: r.suiteName,
       status: r.status,
+      expectedOutcome: r.expectedOutcome,
+      meetsExpectedOutcome: r.status === r.expectedOutcome,
       startedAt: r.startedAt,
       durationMs: r.durationMs,
     }))
@@ -492,7 +551,19 @@ async function executeRun(
     const plan = compile(spec)
     const validation = validate(spec, plan)
 
+    // Snapshot plan step metadata for historical capture in the run record.
+    // This ensures the run view can show action summaries even after the spec changes.
+    const planSnapshot: PlanStepSnapshot[] = plan.steps.map((s, index) => ({
+      index,
+      actionType: s.action.__type,
+      actionSummary: formatActionSummary(s),
+      saves: Object.keys(s.saves),
+      expects: formatExpectSummaries(s),
+      flowOrigin: s.flowOrigin ?? null,
+    }))
+
     manager.update(run.id, {
+      planSnapshot,
       validation: {
         errors: validation.errors.map(e => e.message),
         warnings: validation.warnings.map(w => w.message),

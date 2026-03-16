@@ -8,6 +8,7 @@ import { spec, flow, step, expect, ref, env } from '../../../src/dsl.js'
 export default spec('invalid: bad refs fixture', {
   baseUrl: env('APP_BASE_URL'),
   tags: ['invalid-fixture'],
+  expectedOutcome: 'error',
   flows: [
     flow('bad flow', {
       steps: [

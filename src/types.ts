@@ -165,6 +165,12 @@ export type ApiContract = {
 
 export type SpecSafety = 'destructive' | 'non-destructive'
 
+// Declares what a successful run of this spec looks like.
+// Defaults to 'pass' (all steps pass). Set to 'error' for fixture specs that are
+// intentionally invalid -- the UI will render an error outcome as correct (green)
+// and an unexpected pass outcome as alarming (red).
+export type SpecExpectedOutcome = 'pass' | 'error'
+
 export type Spec = {
   name: string
   baseUrl?: Resolvable<string>
@@ -172,6 +178,7 @@ export type Spec = {
   data?: Record<string, unknown>
   tags?: string[]
   safety?: SpecSafety
+  expectedOutcome?: SpecExpectedOutcome
   // library: reusable flows available to use() but NOT directly executed at top level
   library?: Flow[]
   flows: Flow[]
