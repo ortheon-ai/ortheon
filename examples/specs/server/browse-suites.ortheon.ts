@@ -278,6 +278,12 @@ export default spec('ortheon server: browse and expand', {
           ),
         ]),
 
+        section('run all button', [
+          step('run all button is visible on dashboard',
+            browser('waitFor', { target: '[data-testid="run-all-button"]', state: 'visible' })
+          ),
+        ]),
+
         section('suite detail navigation', [
           step('click first suite card',
             browser('click', { target: '[data-testid="suite-card"]:first-child' })

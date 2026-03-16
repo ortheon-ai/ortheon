@@ -324,14 +324,17 @@ function renderSuiteGrid(suites, searchVal) {
       ${renderTabBar('suites')}
       <div class="tab-content-header">
         <div class="filter-bar">
-          <input
-            class="search-input"
-            type="search"
-            placeholder="Search suites…"
-            value="${escapeHtml(searchVal)}"
-            data-testid="search-input"
-            autocomplete="off"
-          />
+          <div class="filter-bar-row">
+            <input
+              class="search-input"
+              type="search"
+              placeholder="Search suites…"
+              value="${escapeHtml(searchVal)}"
+              data-testid="search-input"
+              autocomplete="off"
+            />
+            <button class="btn btn-primary" id="run-all-btn" data-testid="run-all-button">▶ Run All</button>
+          </div>
           ${tagChips}
         </div>
         <div class="section-subtitle">${suites.length} suite${suites.length !== 1 ? 's' : ''} discovered</div>
@@ -364,6 +367,12 @@ function renderSuiteGrid(suites, searchVal) {
       fetchFilteredSuites(searchVal2, _activeTag)
     })
   })
+
+  // Wire up Run All
+  const runAllBtn = root.querySelector('#run-all-btn')
+  if (runAllBtn) {
+    runAllBtn.addEventListener('click', () => startRunAll())
+  }
 }
 
 async function fetchFilteredSuites(name, tag) {
@@ -681,6 +690,25 @@ async function startRun(suiteId) {
     if (btn) {
       btn.disabled = false
       btn.textContent = `Error: ${err.message}`
+    }
+  }
+}
+
+async function startRunAll() {
+  const btn = document.getElementById('run-all-btn')
+  if (btn) {
+    btn.disabled = true
+    btn.textContent = '▶ Starting…'
+  }
+
+  try {
+    await apiPost('/api/run-all', {})
+    navigate('/runs')
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false
+      btn.textContent = `Error: ${err.message}`
+      setTimeout(() => { btn.textContent = '▶ Run All' }, 3000)
     }
   }
 }

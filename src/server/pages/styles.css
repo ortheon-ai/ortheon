@@ -856,6 +856,12 @@ code, pre, .mono { font-family: var(--mono); }
   margin-bottom: 12px;
 }
 
+.filter-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .search-input {
   width: 100%;
   max-width: 480px;

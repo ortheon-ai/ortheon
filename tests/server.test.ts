@@ -881,6 +881,142 @@ describe('expectedOutcome in run responses', () => {
 })
 
 // ---------------------------------------------------------------------------
+// POST /api/run-all
+// ---------------------------------------------------------------------------
+
+describe('POST /api/run-all', () => {
+  it('returns 201 with runIds for all suites', async () => {
+    const s1Id = encodeSuiteId('test/run-all-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-2.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, multiFlowSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', {})
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(2)
+      expect(new Set(runIds).size).toBe(2)
+
+      await sleep(50)
+      const { body: runsBody } = await get(srv.baseUrl, '/api/runs')
+      const runs = (runsBody as { runs: { id: string }[] }).runs
+      for (const runId of runIds) {
+        expect(runs.some(r => r.id === runId)).toBe(true)
+      }
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('creates error runs for load-errored suites', async () => {
+    const okId = encodeSuiteId('test/run-all-ok.ts')
+    const errId = encodeSuiteId('test/run-all-err.ts')
+    const srv = await startTestServer([
+      makeSuite(okId, healthSpec),
+      { id: errId, name: 'broken', path: '/test/run-all-err.ts', relativePath: 'test/run-all-err.ts', spec: null, loadError: 'Cannot parse' },
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', {})
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(2)
+
+      await sleep(50)
+      const errRunId = runIds[1]!
+      const { body: runBody } = await get(srv.baseUrl, `/api/runs/${errRunId}`)
+      expect((runBody as { status: string }).status).toBe('error')
+      expect((runBody as { error: string }).error).toContain('Cannot parse')
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('returns 400 for malformed body', async () => {
+    const srv = await startTestServer([makeSuite('s1', healthSpec)])
+    try {
+      const res = await fetch(`${srv.baseUrl}/api/run-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '"not-an-object"',
+      })
+      expect(res.status).toBe(400)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('excludeTags skips suites with matching tags', async () => {
+    const taggedSpec: Spec = spec('tagged suite', {
+      baseUrl: 'http://localhost:9999',
+      tags: ['server', 'run'],
+      flows: [
+        flow('f', { steps: [step('s', api('GET /ping', {}))] }),
+      ],
+    })
+    const s1Id = encodeSuiteId('test/run-all-tag-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-tag-2.ts')
+    const s3Id = encodeSuiteId('test/run-all-tag-3.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, taggedSpec),
+      makeSuite(s3Id, multiFlowSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', { excludeTags: ['server'] })
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      // Only healthSpec and multiFlowSpec should run (taggedSpec has 'server' tag)
+      expect(runIds).toHaveLength(2)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('excludeTags is case-insensitive', async () => {
+    const taggedSpec: Spec = spec('upper tag suite', {
+      baseUrl: 'http://localhost:9999',
+      tags: ['Server'],
+      flows: [
+        flow('f', { steps: [step('s', api('GET /ping', {}))] }),
+      ],
+    })
+    const s1Id = encodeSuiteId('test/run-all-case-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-case-2.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, taggedSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', { excludeTags: ['server'] })
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(1)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('runs all suites when excludeTags is empty', async () => {
+    const s1Id = encodeSuiteId('test/run-all-empty-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-empty-2.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, multiFlowSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', { excludeTags: [] })
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(2)
+    } finally {
+      await srv.close()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Concurrent runs
 // ---------------------------------------------------------------------------
 

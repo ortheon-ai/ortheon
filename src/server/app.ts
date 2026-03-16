@@ -494,6 +494,84 @@ export function createApp(
   })
 
   // -------------------------------------------------------------------------
+  // POST /api/run-all -- start a run for every suite (optionally filtered)
+  //
+  // Optional JSON body:
+  //   { headed?: boolean, baseUrl?: string, timeoutMs?: number,
+  //     excludeTags?: string[] }
+  //
+  // excludeTags skips any suite that has at least one of the listed tags.
+  // -------------------------------------------------------------------------
+
+  app.post('/api/run-all', (req, res) => {
+    const body = req.body as Record<string, unknown> | undefined | null
+    if (body !== undefined && body !== null && typeof body !== 'object') {
+      res.status(400).json({ error: 'Request body must be a JSON object' })
+      return
+    }
+
+    const headed = typeof body?.['headed'] === 'boolean' ? body['headed'] : undefined
+    const reqBaseUrl = typeof body?.['baseUrl'] === 'string' ? body['baseUrl'] : undefined
+    const timeoutMs = typeof body?.['timeoutMs'] === 'number' ? body['timeoutMs'] : undefined
+    const excludeTags: string[] = Array.isArray(body?.['excludeTags'])
+      ? (body['excludeTags'] as unknown[]).filter((t): t is string => typeof t === 'string').map(t => t.toLowerCase())
+      : []
+
+    const runIds: string[] = []
+
+    for (const suite of suites) {
+      if (excludeTags.length > 0) {
+        const suiteTags = (suite.spec?.tags ?? []).map(t => t.toLowerCase())
+        if (suiteTags.some(t => excludeTags.includes(t))) continue
+      }
+      if (suite.loadError !== null || suite.spec === null) {
+        const run: RunRecord = {
+          id: randomUUID(),
+          suiteId: suite.id,
+          suiteName: suite.name,
+          status: 'error',
+          expectedOutcome: 'pass',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          durationMs: 0,
+          error: suite.loadError ?? 'Failed to load spec',
+          validation: null,
+          result: null,
+          planSnapshot: null,
+        }
+        runManager.add(run)
+        runIds.push(run.id)
+        continue
+      }
+
+      const run: RunRecord = {
+        id: randomUUID(),
+        suiteId: suite.id,
+        suiteName: suite.spec.name,
+        status: 'pending',
+        expectedOutcome: suite.spec.expectedOutcome ?? 'pass',
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        durationMs: null,
+        error: null,
+        validation: null,
+        result: null,
+        planSnapshot: null,
+      }
+      runManager.add(run)
+      runIds.push(run.id)
+
+      const runOptions: { headed?: boolean; baseUrl?: string; timeoutMs?: number } = {}
+      if (headed !== undefined) runOptions.headed = headed
+      if (reqBaseUrl !== undefined) runOptions.baseUrl = reqBaseUrl
+      if (timeoutMs !== undefined) runOptions.timeoutMs = timeoutMs
+      void executeRun(run, suite.spec, runManager, runOptions)
+    }
+
+    res.status(201).json({ runIds })
+  })
+
+  // -------------------------------------------------------------------------
   // GET /api/runs -- list all runs (summaries)
   // -------------------------------------------------------------------------
 

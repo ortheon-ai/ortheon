@@ -221,6 +221,66 @@ export default spec('ortheon server: run suites', {
       ],
     }),
 
+    flow('api: run all suites (excluding server self-tests)', {
+      steps: [
+        section('start run-all', [
+          // excludeTags prevents recursion: this spec is tagged "server", so
+          // run-all will skip it (and browse-suites) when executing.
+          step('run all non-server suites',
+            api('runAll', {
+              body: { excludeTags: ['server'] },
+              expect: {
+                status: 201,
+                body: { runIds: existsCheck() },
+              },
+              save: {
+                runAllIds: 'body.runIds',
+                runAllFirstId: 'body.runIds[0]',
+              },
+            })
+          ),
+          step('run-all returned at least one run id',
+            expect(ref('runAllFirstId'), 'exists')
+          ),
+        ]),
+
+        section('verify run-all runs appear in list', [
+          step('list runs after run-all',
+            api('listRuns', {
+              expect: {
+                status: 200,
+                body: { runs: existsCheck() },
+              },
+              save: {
+                runsAfterRunAll: 'body.runs.length',
+              },
+            })
+          ),
+          step('runs list is non-empty after run-all',
+            expect(ref('runsAfterRunAll'), 'exists')
+          ),
+        ]),
+
+        section('poll first run-all run to completion', [
+          step('wait for first run-all run to finish',
+            api('getRun', {
+              params: { runId: ref('runAllFirstId') },
+              expect: {
+                status: 200,
+              },
+              save: {
+                runAllFirstStatus: 'body.status',
+              },
+            }),
+            { retries: 15, retryIntervalMs: 1000 }
+          ),
+          step('first run-all run reached a terminal status',
+            expect(ref('runAllFirstStatus'), 'exists')
+          ),
+        ]),
+      ],
+    }),
+
     flow('browser: run via web UI', {
       steps: [
         section('navigate to suite detail', [
