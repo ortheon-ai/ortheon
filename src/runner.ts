@@ -106,7 +106,6 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
 
   const passed = stepResults.filter(s => s.status === 'pass').length
   const failedCount = stepResults.filter(s => s.status === 'fail').length
-  const skipped = stepResults.filter(s => s.status === 'skip').length
 
   return {
     specName: spec.name,
