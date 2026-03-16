@@ -72,4 +72,25 @@ export const serverApi: Record<string, ApiContract> = {
       //         error, validation, flows, totalSteps, passedSteps, failedSteps }
     },
   },
+  listContracts: {
+    method: 'GET',
+    path: '/api/contracts',
+    purpose: 'List all API contracts aggregated across all loaded suites',
+    response: {
+      status: 200,
+      // body: { contracts: [{ name, method, path, purpose, suiteCount }] }
+    },
+  },
+  getContract: {
+    method: 'GET',
+    path: '/api/contracts/{name}',
+    purpose: 'Get full contract detail including request/response metadata and the suites that use it',
+    request: {
+      params: { name: 'contract name (key in the apis catalog)' },
+    },
+    response: {
+      status: 200,
+      // body: { name, method, path, purpose, request, response, suites: [{ id, name }] }
+    },
+  },
 }

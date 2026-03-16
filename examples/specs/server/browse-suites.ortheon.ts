@@ -12,6 +12,7 @@ import { serverApi } from '../../contracts/server.js'
 
 const KNOWN_SUITE_NAME = 'service health check'
 const KNOWN_STEP_SUBSTRING = 'GET /api/health'
+const KNOWN_CONTRACT_NAME = 'health'
 
 export default spec('ortheon server: browse and expand', {
   baseUrl: env('ORTHEON_SERVER_URL'),
@@ -122,6 +123,75 @@ export default spec('ortheon server: browse and expand', {
       ],
     }),
 
+    flow('api: list and inspect contracts', {
+      steps: [
+        section('contract list', [
+          step('list contracts',
+            api('listContracts', {
+              expect: {
+                status: 200,
+                body: { contracts: existsCheck() },
+              },
+              save: {
+                firstContractName: 'body.contracts[0].name',
+                firstContractMethod: 'body.contracts[0].method',
+                firstContractPath: 'body.contracts[0].path',
+              },
+            })
+          ),
+          step('contract list is non-empty',
+            expect(ref('firstContractName'), 'exists')
+          ),
+          step('first contract has a method',
+            expect(ref('firstContractMethod'), 'exists')
+          ),
+          step('first contract has a path',
+            expect(ref('firstContractPath'), 'exists')
+          ),
+        ]),
+
+        section('contract detail', [
+          step('get known contract detail',
+            api('getContract', {
+              params: { name: KNOWN_CONTRACT_NAME },
+              expect: {
+                status: 200,
+                body: {
+                  name: existsCheck(),
+                  method: existsCheck(),
+                  path: existsCheck(),
+                  suites: existsCheck(),
+                },
+              },
+              save: {
+                contractMethod: 'body.method',
+                contractPath: 'body.path',
+                contractSuiteCount: 'body.suites.length',
+              },
+            })
+          ),
+          step('known contract method is GET',
+            expect(ref('contractMethod'), 'equals', 'GET')
+          ),
+          step('known contract path is correct',
+            expect(ref('contractPath'), 'equals', '/api/health')
+          ),
+          step('known contract is used by at least one suite',
+            expect(ref('contractSuiteCount'), 'exists')
+          ),
+        ]),
+
+        section('unknown contract returns 404', [
+          step('get non-existent contract',
+            api('getContract', {
+              params: { name: 'doesNotExist' },
+              expect: { status: 404 },
+            })
+          ),
+        ]),
+      ],
+    }),
+
     flow('browser: dashboard and suite detail', {
       steps: [
         section('dashboard', [
@@ -154,6 +224,33 @@ export default spec('ortheon server: browse and expand', {
           ),
           step('run button is visible',
             browser('waitFor', { target: '[data-testid="run-button"]', state: 'visible' })
+          ),
+        ]),
+
+        section('contracts tab', [
+          step('navigate to dashboard',
+            browser('goto', { url: '/' })
+          ),
+          step('wait for suite list',
+            browser('waitFor', { target: '[data-testid="suite-list"]', state: 'visible' })
+          ),
+          step('click contracts tab',
+            browser('click', { target: 'a[href="/contracts"]' })
+          ),
+          step('wait for contract list to appear',
+            browser('waitFor', { target: '[data-testid="contract-list"]', state: 'visible' })
+          ),
+          step('contract list has at least one card',
+            browser('waitFor', { target: '[data-testid="contract-card"]', state: 'visible' })
+          ),
+        ]),
+
+        section('contract detail navigation', [
+          step('click first contract card',
+            browser('click', { target: '[data-testid="contract-card"]:first-child' })
+          ),
+          step('wait for contract detail to appear',
+            browser('waitFor', { target: '[data-testid="contract-detail"]', state: 'visible' })
           ),
         ]),
       ],
