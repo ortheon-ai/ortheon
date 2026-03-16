@@ -241,7 +241,7 @@ export default spec('ortheon server: browse and expand', {
             browser('waitFor', { target: '[data-testid="contract-list"]', state: 'visible' })
           ),
           step('contract list has at least one card',
-            browser('waitFor', { target: '[data-testid="contract-card"]', state: 'visible' })
+            browser('waitFor', { target: '[data-testid="contract-card"]:first-child', state: 'visible' })
           ),
         ]),
 
