@@ -569,9 +569,11 @@ export async function startServer(
   const runManager = new RunManager()
   const app = createApp(suites, runManager)
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server = createServer(app)
+    server.on('error', reject)
     server.listen(port, () => {
+      server.off('error', reject)
       console.log(`Ortheon server running at http://localhost:${port}`)
       console.log(`Serving ${suites.length} spec(s)`)
       suites
