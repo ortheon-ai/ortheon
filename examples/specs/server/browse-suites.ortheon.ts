@@ -228,7 +228,7 @@ export default spec('ortheon server: browse and expand', {
         ]),
 
         section('contracts tab', [
-          step('navigate to dashboard',
+          step('navigate back to dashboard',
             browser('goto', { url: '/' })
           ),
           step('wait for suite list',
