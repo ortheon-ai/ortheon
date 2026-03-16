@@ -1010,7 +1010,6 @@ function renderRun(run) {
   })
 
   // Wire up re-run button
-  const rerunBtnEl = root.getElementById ? root.getElementById('rerun-btn') : document.getElementById('rerun-btn')
   const rerunBtnActual = document.getElementById('rerun-btn')
   if (rerunBtnActual) {
     rerunBtnActual.addEventListener('click', async () => {
