@@ -288,14 +288,16 @@ All under `/api`. Suite IDs are base64url-encoded relative file paths.
 
 | Method | Path                      | Description                                     |
 | ------ | ------------------------- | ----------------------------------------------- |
-| GET    | `/api/suites`             | List all suites (id, name, path, flowCount, tags) |
+| GET    | `/api/suites`             | List all suites, sorted by path. Optional `?name=` (substring) and `?tag=` (exact) filters. |
 | GET    | `/api/suites/:id`         | Suite metadata (flowNames, stepCount, apiNames) |
 | GET    | `/api/suites/:id/plan`    | Expanded plan + validation diagnostics          |
 | POST   | `/api/suites/:id/run`     | Start an async run, returns `{ runId }`         |
 | GET    | `/api/runs`               | List all runs (summaries)                       |
-| GET    | `/api/runs/:id`           | Full run detail with per-step results           |
+| GET    | `/api/runs/:id`           | Full run detail with per-flow, per-step results |
 
 POST body for `/run` (all optional): `{ headed?, baseUrl?, timeoutMs? }`.
+
+`GET /api/runs/:id` returns a `flows` array that mirrors the authored top-level flows in the spec. Each flow entry contains its steps, pass/fail/skip counts, and the original flow name.
 
 The server always validates before running. If validation fails, the run is created with `status: "error"` and diagnostics are included. Invalid specs are refused execution.
 
@@ -317,12 +319,12 @@ APP_BASE_URL=http://localhost:3000 ortheon serve 'specs/**/*.ortheon.ts' --base-
 
 ### Primitives
 
-| Function                            | Purpose                          |
-| ----------------------------------- | -------------------------------- |
-| `spec(name, config)`                | Top-level behavioral spec        |
-| `flow(name, { inputs?, steps })`    | Named sequence of steps          |
-| `step(name, action, { retries? }?)` | Single executable step           |
-| `section(name, steps)`              | Cosmetic grouping (not reusable) |
+| Function                                              | Purpose                          |
+| ----------------------------------------------------- | -------------------------------- |
+| `spec(name, config)`                                  | Top-level behavioral spec        |
+| `flow(name, { inputs?, steps })`                      | Named sequence of steps          |
+| `step(name, action, { retries?, retryIntervalMs? }?)` | Single executable step           |
+| `section(name, steps)`                                | Cosmetic grouping (not reusable) |
 
 ### Actions
 
@@ -449,13 +451,27 @@ DSL (authoring) --> Compiler (expansion) --> Runner (execution)
 
 A step failure stops the current flow immediately and marks the spec failed.
 
-The `retries` option is the only modifier:
+`retries` controls how many extra attempts are made:
 
 ```ts
 step('flaky verification', api('verifyEffects', { ... }), { retries: 2 })
 ```
 
-This retries the entire step up to 2 extra times.
+This retries the step up to 2 extra times. By default, retries use linear backoff (500ms × attempt number).
+
+For **polling** — repeatedly checking until a condition is met — use `retryIntervalMs` to set a fixed interval instead:
+
+```ts
+step('wait for job to complete',
+  api('getJob', {
+    params: { jobId: ref('jobId') },
+    expect: { status: 200, body: { status: 'done' } },
+  }),
+  { retries: 20, retryIntervalMs: 1000 }
+)
+```
+
+When `retryIntervalMs` is set, every retry waits exactly that many milliseconds regardless of attempt count. Set it explicitly whenever fixed-interval polling is the intent; omitting it leaves the linear-backoff default in place.
 
 ## Auth model
 

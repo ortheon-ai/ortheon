@@ -82,7 +82,13 @@ Transforms a `Spec` AST into an `ExecutionPlan` -- a flat, ordered list of execu
 
 4. **Flatten sections** -- collapses sections into the parent step list, preserving the section name as metadata on each step.
 
-5. **Emit `ExecutionPlan`** -- the `baseUrl` stays as `Resolvable<string>` (may be an unresolved `env()` value). The runner resolves it at execution time.
+5. **Emit `ExecutionPlan`** -- the `baseUrl` stays as `Resolvable<string>` (may be an unresolved `env()` value). The runner resolves it at execution time. The plan also includes `flowRanges: FlowRange[]` -- one entry per top-level flow, recording the flow name, the index of its first step in the flat step list, and its step count. This allows the runner to reconstruct per-flow result grouping without re-parsing the AST.
+
+```ts
+FlowRange = { name: string; startIndex: number; stepCount: number }
+```
+
+Flows that expand to zero steps (unusual but valid) still produce a `FlowRange` with `stepCount: 0`.
 
 The `formatExpandedPlan()` function produces the human-readable expanded output used by `ortheon expand`.
 
@@ -99,6 +105,8 @@ Two-pass validation, split to avoid the "two almost-compilers" problem.
 - Named API targets exist in `spec.apis`
 - `use()` targets exist in the flow map
 - Save path syntax validity
+- `retries` must be a non-negative integer when present
+- `retryIntervalMs` must be a non-negative finite number when present
 
 **Pass 2: Expanded-plan (on compiled `ExecutionPlan`)**
 
@@ -125,10 +133,15 @@ The main `runSpec()` function:
    - Executes the action
    - Processes saves
    - Evaluates assertions
-   - On failure: retries up to `step.retries` times
+   - On failure: retries up to `step.retries` times with delay between attempts
    - On final failure: stops the flow, skips remaining steps
 7. Closes browser
-8. Returns `SpecResult`
+8. Regroups flat step results back into per-flow `FlowResult` entries using `plan.flowRanges`
+9. Returns `SpecResult`
+
+**Retry cadence:** The delay between retry attempts is `step.retryIntervalMs ?? (500 * attempt)`. When `retryIntervalMs` is not set, the default is linear backoff (500ms on attempt 1, 1000ms on attempt 2, etc.). This is appropriate for transient error retries. For polling -- checking a resource until it reaches a desired state -- set `retryIntervalMs` explicitly to get a fixed interval.
+
+**Flow grouping:** `SpecResult.flows` mirrors the authored top-level flows from the spec. Each `FlowResult` is named after its authored flow (not the spec). The `plan.flowRanges` array is used to slice the flat `stepResults` array without re-traversing the AST. Zero-step flows produce an empty `FlowResult`.
 
 ### Context (`src/context.ts`)
 
@@ -219,7 +232,15 @@ Runs are lost on server restart. If the server is being used as ephemeral infras
 
 Six routes. All paths return JSON. Suite endpoints always reload the spec file at request time for metadata accuracy. The plan endpoint reruns compilation to compute the expanded step list.
 
+**`GET /api/suites`** accepts two optional query parameters:
+- `?name=<substring>` -- case-insensitive substring match on suite name
+- `?tag=<value>` -- case-insensitive exact match against suite tags (not substring)
+
+Results are always sorted lexically by relative file path, which gives stable ordering across requests and makes test assertions against `suites[0]` reliable.
+
 The POST `/api/suites/:id/run` body accepts three optional overrides (`headed`, `baseUrl`, `timeoutMs`). If `baseUrl` is omitted, the spec resolves it from environment variables (`APP_BASE_URL`, or whichever `env()` key it declares). The server never injects a base URL globally -- each spec owns its own resolution.
+
+`GET /api/runs/:id` returns a `flows` array that preserves the authored top-level flow structure from the spec (via the `flowRanges` in the compiled plan). Each flow entry contains its original name, its steps, and pass/fail/skip counts.
 
 ### SPA (`src/server/pages/`)
 

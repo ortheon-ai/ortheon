@@ -222,6 +222,78 @@ describe('compile', () => {
   })
 })
 
+describe('flowRanges', () => {
+  it('emits one FlowRange per top-level flow', () => {
+    const s = spec('test', {
+      flows: [
+        flow('flow-a', {
+          steps: [
+            step('step 1', api('GET /api/a', {})),
+            step('step 2', api('GET /api/b', {})),
+          ],
+        }),
+        flow('flow-b', {
+          steps: [
+            step('step 3', api('GET /api/c', {})),
+          ],
+        }),
+      ],
+    })
+
+    const plan = compile(s)
+    expect(plan.flowRanges).toHaveLength(2)
+    expect(plan.flowRanges[0]).toEqual({ name: 'flow-a', startIndex: 0, stepCount: 2 })
+    expect(plan.flowRanges[1]).toEqual({ name: 'flow-b', startIndex: 2, stepCount: 1 })
+  })
+
+  it('emits a FlowRange with stepCount 0 for zero-step flows', () => {
+    const s = spec('test', {
+      flows: [
+        flow('empty-flow', { steps: [] }),
+        flow('main', {
+          steps: [step('do it', api('GET /api/x', {}))],
+        }),
+      ],
+    })
+
+    const plan = compile(s)
+    expect(plan.flowRanges).toHaveLength(2)
+    expect(plan.flowRanges[0]).toEqual({ name: 'empty-flow', startIndex: 0, stepCount: 0 })
+    expect(plan.flowRanges[1]).toEqual({ name: 'main', startIndex: 0, stepCount: 1 })
+  })
+
+  it('startIndex correctly accounts for use() expansion', () => {
+    const loginFlow = flow('login', {
+      inputs: { email: 'string' },
+      steps: [
+        step('fill email', browser('type', { target: '[name=email]', value: ref('email') })),
+        step('submit', browser('click', { target: '[type=submit]' })),
+      ],
+    })
+
+    const s = spec('test', {
+      library: [loginFlow],
+      flows: [
+        flow('setup', {
+          steps: [
+            step('do login', use('login', { email: 'a@b.com' })),
+          ],
+        }),
+        flow('verify', {
+          steps: [
+            step('check result', api('GET /api/result', {})),
+          ],
+        }),
+      ],
+    })
+
+    const plan = compile(s)
+    // 'do login' expands to 2 steps from the login flow
+    expect(plan.flowRanges[0]).toEqual({ name: 'setup', startIndex: 0, stepCount: 2 })
+    expect(plan.flowRanges[1]).toEqual({ name: 'verify', startIndex: 2, stepCount: 1 })
+  })
+})
+
 describe('formatExpandedPlan', () => {
   it('produces readable text output', () => {
     const s = spec('health check', {

@@ -11,8 +11,20 @@ import { serverApi } from '../../contracts/server.js'
 //
 // The health suite is used as the known target suite because it is fast,
 // API-only, and has a predictable pass outcome.
+//
+// The invalid fixture suite (examples/specs/invalid/bad-refs.ortheon.ts) is used
+// to exercise the validate-before-run lifecycle and the error run detail shape.
+//
+// NOTE: API flows use ?name= filtering to discover suite IDs dynamically.
+// The browser flow uses a hardcoded path for navigation because the DSL has no
+// string-interpolation primitive -- this is the only remaining hardcoded ID.
 
-const HEALTH_SUITE_ID = 'ZXhhbXBsZXMvc3BlY3Mvc21va2UvaGVhbHRoLm9ydGhlb24udHM'
+const HEALTH_SUITE_NAME  = 'service health check'
+const HEALTH_FLOW_NAME   = 'health check'
+const INVALID_SUITE_NAME = 'invalid: bad refs fixture'
+
+// Used only for browser navigation (SPA route construction requires a literal path).
+const HEALTH_SUITE_PATH = '/suites/ZXhhbXBsZXMvc3BlY3Mvc21va2UvaGVhbHRoLm9ydGhlb24udHM'
 
 export default spec('ortheon server: run suites', {
   baseUrl: env('ORTHEON_SERVER_URL'),
@@ -22,10 +34,30 @@ export default spec('ortheon server: run suites', {
   flows: [
     flow('api: start and monitor a run', {
       steps: [
+        section('discover health suite', [
+          // Use the ?name= filter so we do not depend on hardcoded base64url IDs.
+          step('find health suite by name',
+            api('listSuites', {
+              query: { name: HEALTH_SUITE_NAME },
+              expect: {
+                status: 200,
+                body: { suites: existsCheck() },
+              },
+              save: {
+                healthSuiteId: 'body.suites[0].id',
+                healthSuiteName: 'body.suites[0].name',
+              },
+            })
+          ),
+          step('health suite id is non-empty',
+            expect(ref('healthSuiteId'), 'exists')
+          ),
+        ]),
+
         section('start run', [
           step('start run for health suite',
             api('startSuiteRun', {
-              params: { id: HEALTH_SUITE_ID },
+              params: { id: ref('healthSuiteId') },
               body: {},
               expect: {
                 status: 201,
@@ -34,8 +66,8 @@ export default spec('ortheon server: run suites', {
               save: { runId: 'body.runId' },
             })
           ),
-          step('runId is a non-empty string',
-            expect(ref('runId'), 'exists')
+          step('runId matches UUID format',
+            expect(ref('runId'), 'matches', '^[0-9a-f]{8}-')
           ),
         ]),
 
@@ -55,10 +87,10 @@ export default spec('ortheon server: run suites', {
         ]),
 
         section('poll run to completion', [
-          // Retry up to 15 times (each retry delays 500ms * attempt).
-          // The health spec should complete within a few seconds.
-          // If body.status is 'running' or 'pending', the inline expect
-          // body check fails, causing the step to retry.
+          // Poll until the run reaches 'pass'. retryIntervalMs sets a fixed 1s cadence
+          // rather than the default linear backoff -- the right choice for polling.
+          // If body.status is 'running' or 'pending', the inline body match fails,
+          // which triggers a retry.
           step('wait for run to pass',
             api('getRun', {
               params: { runId: ref('runId') },
@@ -67,17 +99,106 @@ export default spec('ortheon server: run suites', {
                 body: { status: 'pass' },
               },
               save: {
-                runStatus: 'body.status',
+                runStatus:      'body.status',
                 runPassedSteps: 'body.passedSteps',
+                runSuiteName:   'body.suiteName',
+                runFinishedAt:  'body.finishedAt',
+                runDurationMs:  'body.durationMs',
+                runTotalSteps:  'body.totalSteps',
+                runError:       'body.error',
+                runFlowName:    'body.flows[0].name',
               },
             }),
-            { retries: 15 }
+            { retries: 15, retryIntervalMs: 1000 }
           ),
           step('run status is pass',
             expect(ref('runStatus'), 'equals', 'pass')
           ),
           step('run has passed steps',
             expect(ref('runPassedSteps'), 'exists')
+          ),
+          step('run suite name is correct',
+            expect(ref('runSuiteName'), 'equals', HEALTH_SUITE_NAME)
+          ),
+          step('run has finished timestamp',
+            expect(ref('runFinishedAt'), 'exists')
+          ),
+          step('run has duration',
+            expect(ref('runDurationMs'), 'exists')
+          ),
+          step('run has total steps count',
+            expect(ref('runTotalSteps'), 'exists')
+          ),
+          step('passing run has no error',
+            expect(ref('runError'), 'notExists')
+          ),
+          // Proves that flow grouping is preserved in run results:
+          // the first flow in the result must carry the authored flow name.
+          step('run result preserves authored flow name',
+            expect(ref('runFlowName'), 'equals', HEALTH_FLOW_NAME)
+          ),
+        ]),
+      ],
+    }),
+
+    flow('api: invalid suite run lifecycle', {
+      steps: [
+        section('discover invalid fixture', [
+          step('find invalid suite by name',
+            api('listSuites', {
+              query: { name: INVALID_SUITE_NAME },
+              expect: {
+                status: 200,
+                body: { suites: existsCheck() },
+              },
+              save: {
+                invalidSuiteId: 'body.suites[0].id',
+              },
+            })
+          ),
+          step('invalid suite id is non-empty',
+            expect(ref('invalidSuiteId'), 'exists')
+          ),
+        ]),
+
+        section('start run for invalid suite', [
+          step('start invalid run',
+            api('startSuiteRun', {
+              params: { id: ref('invalidSuiteId') },
+              body: {},
+              expect: {
+                status: 201,
+                body: { runId: existsCheck() },
+              },
+              save: { invalidRunId: 'body.runId' },
+            })
+          ),
+        ]),
+
+        section('poll invalid run to error', [
+          step('wait for invalid run to error',
+            api('getRun', {
+              params: { runId: ref('invalidRunId') },
+              expect: {
+                status: 200,
+                body: { status: 'error' },
+              },
+              save: {
+                invalidRunStatus:     'body.status',
+                invalidRunError:      'body.error',
+                invalidValidationErr: 'body.validation.errors[0]',
+              },
+            }),
+            { retries: 10, retryIntervalMs: 500 }
+          ),
+          step('invalid run status is error',
+            expect(ref('invalidRunStatus'), 'equals', 'error')
+          ),
+          step('invalid run has a validation error',
+            expect(ref('invalidValidationErr'), 'exists')
+          ),
+          step('invalid run error message references validation',
+            expect(ref('invalidRunError'), 'contains', 'Validation')
           ),
         ]),
       ],
@@ -87,7 +208,7 @@ export default spec('ortheon server: run suites', {
       steps: [
         section('navigate to suite detail', [
           step('navigate to health suite detail',
-            browser('goto', { url: `/suites/${HEALTH_SUITE_ID}` })
+            browser('goto', { url: HEALTH_SUITE_PATH })
           ),
           step('wait for suite detail to load',
             browser('waitFor', { target: '[data-testid="suite-detail"]', state: 'visible' })

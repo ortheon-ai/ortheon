@@ -7,6 +7,7 @@ import type {
   ExpectStep,
   Flow,
   FlowItem,
+  FlowRange,
   InlineExpect,
   Resolvable,
   Section,
@@ -169,6 +170,7 @@ function expandStep(
         options: apiAction.options,
       },
       retries: substitutedStep.retries ?? 0,
+      ...(substitutedStep.retryIntervalMs !== undefined ? { retryIntervalMs: substitutedStep.retryIntervalMs } : {}),
       saves: apiAction.options.save ?? {},
       ...(apiAction.options.expect !== undefined ? { inlineExpect: apiAction.options.expect } : {}),
       expects: [],
@@ -184,6 +186,7 @@ function expandStep(
       ...(flowOrigin ? { flowOrigin } : {}),
       action: action as BrowserStep,
       retries: substitutedStep.retries ?? 0,
+      ...(substitutedStep.retryIntervalMs !== undefined ? { retryIntervalMs: substitutedStep.retryIntervalMs } : {}),
       saves: {},
       expects: [],
     }
@@ -205,6 +208,7 @@ function expandStep(
       ...(flowOrigin ? { flowOrigin } : {}),
       action: expectAction,
       retries: substitutedStep.retries ?? 0,
+      ...(substitutedStep.retryIntervalMs !== undefined ? { retryIntervalMs: substitutedStep.retryIntervalMs } : {}),
       saves: {},
       expects: [
         {
@@ -261,11 +265,14 @@ export function compile(spec: Spec): ExecutionPlan {
   const flowMap = buildFlowMap(allFlows)
 
   const allSteps: ExecutableStep[] = []
+  const flowRanges: FlowRange[] = []
 
   // Only execute top-level flows (spec.flows), not library flows.
   for (const flow of flows) {
+    const startIndex = allSteps.length
     const flowSteps = expandFlowItems(flow.steps, flowMap, apis, undefined, flow.name, {}, undefined)
     allSteps.push(...flowSteps)
+    flowRanges.push({ name: flow.name, startIndex, stepCount: flowSteps.length })
   }
 
   return {
@@ -274,6 +281,7 @@ export function compile(spec: Spec): ExecutionPlan {
     apis,
     data,
     steps: allSteps,
+    flowRanges,
   }
 }
 
@@ -320,6 +328,9 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
     }
     if (step.retries > 0) {
       lines.push(`       retries: ${step.retries}`)
+    }
+    if (step.retryIntervalMs !== undefined) {
+      lines.push(`       retryIntervalMs: ${step.retryIntervalMs}`)
     }
   }
 

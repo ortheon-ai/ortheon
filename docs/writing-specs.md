@@ -264,7 +264,29 @@ step('verify async effects', api('verifyEffects', {
 }), { retries: 3 })
 ```
 
-The step is retried up to N extra times with a small delay between attempts. No backoff DSL. No retry conditions.
+The step is retried up to N extra times. The default delay is linear backoff: 500ms × attempt number. This is fine for transient error retries.
+
+### Polling
+
+For polling — checking until a condition holds — use `retryIntervalMs` to fix the cadence:
+
+```ts
+step('wait for job to finish',
+  api('getJob', {
+    params: { jobId: ref('jobId') },
+    expect: {
+      status: 200,
+      body: { status: 'done' },   // retries when status is not 'done'
+    },
+    save: { jobStatus: 'body.status' },
+  }),
+  { retries: 20, retryIntervalMs: 1000 }
+)
+```
+
+When `retryIntervalMs` is set, every retry waits exactly that many milliseconds regardless of attempt count. When it is not set, the default linear backoff applies.
+
+Set `retryIntervalMs` explicitly whenever fixed-interval polling is the intent. Leaving it unset on a polling step makes the growing delay semantically misleading — the retry machinery is designed for transient failures, not state polling.
 
 ## The `library` field
 

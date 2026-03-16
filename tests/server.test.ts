@@ -215,6 +215,76 @@ describe('GET /api/suites', () => {
 })
 
 // ---------------------------------------------------------------------------
+// GET /api/suites -- filtering and sort order
+// ---------------------------------------------------------------------------
+
+describe('GET /api/suites filtering and sort', () => {
+  const taggedSpec: Spec = spec('tagged suite', {
+    baseUrl: 'http://localhost:9999',
+    tags: ['smoke', 'regression'],
+    flows: [
+      flow('main', {
+        steps: [step('ping', api('GET /ping', {}))],
+      }),
+    ],
+  })
+
+  let srv: TestServer
+
+  beforeAll(async () => {
+    // Use relative paths that produce a known lexical sort order
+    const suites = [
+      makeSuite(encodeSuiteId('b/second.ts'), taggedSpec, { relativePath: 'b/second.ts' }),
+      makeSuite(encodeSuiteId('a/first.ts'), healthSpec,  { relativePath: 'a/first.ts' }),
+    ]
+    srv = await startTestServer(suites)
+  })
+
+  afterAll(() => srv.close())
+
+  it('returns all suites sorted lexically by relativePath', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites')
+    const suites = (body as { suites: { name: string }[] }).suites
+    expect(suites.map(s => s.name)).toEqual(['service health check', 'tagged suite'])
+  })
+
+  it('filters by name (case-insensitive substring)', async () => {
+    const { status, body } = await get(srv.baseUrl, '/api/suites?name=health')
+    expect(status).toBe(200)
+    const suites = (body as { suites: { name: string }[] }).suites
+    expect(suites).toHaveLength(1)
+    expect(suites[0]!.name).toBe('service health check')
+  })
+
+  it('returns empty array for a name that matches nothing', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites?name=nonexistent-xyz')
+    const suites = (body as { suites: unknown[] }).suites
+    expect(suites).toHaveLength(0)
+  })
+
+  it('filters by tag (case-insensitive exact match)', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites?tag=smoke')
+    const suites = (body as { suites: { name: string }[] }).suites
+    expect(suites).toHaveLength(1)
+    expect(suites[0]!.name).toBe('tagged suite')
+  })
+
+  it('tag filter is case-insensitive', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites?tag=SMOKE')
+    const suites = (body as { suites: { name: string }[] }).suites
+    expect(suites).toHaveLength(1)
+    expect(suites[0]!.name).toBe('tagged suite')
+  })
+
+  it('tag filter does not do substring match', async () => {
+    // 'smok' is a substring of 'smoke' but should not match
+    const { body } = await get(srv.baseUrl, '/api/suites?tag=smok')
+    const suites = (body as { suites: unknown[] }).suites
+    expect(suites).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // GET /api/suites/:id
 // ---------------------------------------------------------------------------
 

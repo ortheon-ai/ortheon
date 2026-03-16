@@ -146,6 +146,28 @@ function validateStepAction(
   const action = step.action
   const stepLocation = `${location} > step("${step.name}")`
 
+  // Validate retries: must be a non-negative integer when present
+  if (step.retries !== undefined) {
+    if (!Number.isFinite(step.retries) || step.retries < 0 || !Number.isInteger(step.retries)) {
+      errors.push({
+        severity: 'error',
+        message: `retries must be a non-negative integer in ${stepLocation}`,
+        location: stepLocation,
+      })
+    }
+  }
+
+  // Validate retryIntervalMs: must be a non-negative finite number when present
+  if (step.retryIntervalMs !== undefined) {
+    if (!Number.isFinite(step.retryIntervalMs) || step.retryIntervalMs < 0) {
+      errors.push({
+        severity: 'error',
+        message: `retryIntervalMs must be a non-negative finite number in ${stepLocation}`,
+        location: stepLocation,
+      })
+    }
+  }
+
   switch (action.__type) {
     case 'browser': {
       const bAction = action as BrowserStep & { action: string }

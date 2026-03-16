@@ -71,6 +71,9 @@ describe('runSpec', () => {
       expect(result.status).toBe('pass')
       expect(result.passedSteps).toBe(1)
       expect(result.failedSteps).toBe(0)
+      // Flow results preserve authored flow names
+      expect(result.flows).toHaveLength(1)
+      expect(result.flows[0]!.name).toBe('main')
     })
 
     it('returns fail when a step receives an unexpected status', async () => {
@@ -205,6 +208,53 @@ describe('runSpec', () => {
       const result = await runSpec(theSpec, { baseUrl: url })
       expect(result.status).toBe('pass')
       expect(callCount).toBe(3)
+    })
+
+    it('retries with fixed interval when retryIntervalMs is set', async () => {
+      let callCount = 0
+      const callTimestamps: number[] = []
+      const { server: s, url } = await startTestServer({})
+      server = s
+
+      s.removeAllListeners('request')
+      s.on('request', (req, res) => {
+        if (req.url === '/api/flaky') {
+          callCount++
+          callTimestamps.push(Date.now())
+          const status = callCount < 3 ? 503 : 200
+          res.writeHead(status, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: callCount >= 3 }))
+        } else {
+          res.writeHead(404)
+          res.end()
+        }
+      })
+
+      const theSpec = spec('retry-interval-test', {
+        flows: [
+          flow('main', {
+            steps: [
+              step('flaky call', api('GET /api/flaky', { expect: { status: 200 } }), { retries: 3, retryIntervalMs: 100 }),
+            ],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec, { baseUrl: url })
+      expect(result.status).toBe('pass')
+      expect(callCount).toBe(3)
+      // Verify intervals are approximately fixed (not linearly growing)
+      // Interval 1: between call 1 and 2; interval 2: between call 2 and 3
+      const interval1 = callTimestamps[1]! - callTimestamps[0]!
+      const interval2 = callTimestamps[2]! - callTimestamps[1]!
+      // Both intervals should be ~100ms (allow generous tolerance for CI)
+      expect(interval1).toBeGreaterThanOrEqual(50)
+      expect(interval1).toBeLessThan(400)
+      expect(interval2).toBeGreaterThanOrEqual(50)
+      expect(interval2).toBeLessThan(400)
+      // Fixed interval: second interval should not be dramatically larger than first
+      // (with linear backoff it would be ~double)
+      expect(interval2).toBeLessThan(interval1 * 3)
     })
 
     it('fails after exhausting all retries', async () => {
@@ -368,6 +418,59 @@ describe('runSpec', () => {
       const result = await runSpec(theSpec, { baseUrl: url })
       expect(result.status).toBe('pass')
       expect(result.passedSteps).toBe(3)
+    })
+  })
+
+  describe('flow grouping in results', () => {
+    it('groups step results into per-flow FlowResult entries', async () => {
+      const { server: s, url } = await startTestServer({
+        'GET /api/a': { status: 200, body: {} },
+        'GET /api/b': { status: 200, body: {} },
+      })
+      server = s
+
+      const theSpec = spec('multi-flow-spec', {
+        flows: [
+          flow('flow-one', {
+            steps: [step('step a', api('GET /api/a', { expect: { status: 200 } }))],
+          }),
+          flow('flow-two', {
+            steps: [step('step b', api('GET /api/b', { expect: { status: 200 } }))],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec, { baseUrl: url })
+      expect(result.status).toBe('pass')
+      expect(result.flows).toHaveLength(2)
+      expect(result.flows[0]!.name).toBe('flow-one')
+      expect(result.flows[0]!.steps).toHaveLength(1)
+      expect(result.flows[0]!.steps[0]!.name).toBe('step a')
+      expect(result.flows[1]!.name).toBe('flow-two')
+      expect(result.flows[1]!.steps).toHaveLength(1)
+      expect(result.flows[1]!.steps[0]!.name).toBe('step b')
+    })
+
+    it('produces an empty FlowResult for zero-step flows', async () => {
+      const { server: s, url } = await startTestServer({
+        'GET /api/a': { status: 200, body: {} },
+      })
+      server = s
+
+      const theSpec = spec('zero-step-spec', {
+        flows: [
+          flow('empty-flow', { steps: [] }),
+          flow('real-flow', {
+            steps: [step('step a', api('GET /api/a', { expect: { status: 200 } }))],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec, { baseUrl: url, skipValidation: true })
+      expect(result.flows).toHaveLength(2)
+      expect(result.flows[0]!.name).toBe('empty-flow')
+      expect(result.flows[0]!.steps).toHaveLength(0)
+      expect(result.flows[1]!.name).toBe('real-flow')
     })
   })
 
