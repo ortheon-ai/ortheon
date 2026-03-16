@@ -18,6 +18,7 @@ import type {
   SecretValue,
   Section,
   Spec,
+  SpecExpectedOutcome,
   SpecSafety,
   Step,
   StepAction,
@@ -147,6 +148,7 @@ export type SpecConfig = {
   data?: Record<string, unknown>
   tags?: string[]
   safety?: SpecSafety
+  expectedOutcome?: SpecExpectedOutcome
   // library: reusable flows available to use() but NOT directly executed
   library?: Flow[]
   flows: Flow[]
@@ -160,6 +162,7 @@ export function spec(name: string, config: SpecConfig): Spec {
     ...(config.data ? { data: config.data } : {}),
     ...(config.tags ? { tags: config.tags } : {}),
     ...(config.safety ? { safety: config.safety } : {}),
+    ...(config.expectedOutcome ? { expectedOutcome: config.expectedOutcome } : {}),
     ...(config.library ? { library: config.library } : {}),
     flows: config.flows,
   }
@@ -169,4 +172,4 @@ export function spec(name: string, config: SpecConfig): Spec {
 // Re-export types for spec file convenience
 // ---------------------------------------------------------------------------
 
-export type { BearerValue, Flow, FlowItem, Spec, Step, Section, ApiContract } from './types.js'
+export type { BearerValue, Flow, FlowItem, Spec, SpecExpectedOutcome, Step, Section, ApiContract } from './types.js'

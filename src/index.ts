@@ -31,6 +31,7 @@ export { consoleReport, jsonReport, consoleSummary } from './reporter.js'
 // Types (re-exported for spec file authoring)
 export type {
   Spec,
+  SpecExpectedOutcome,
   Flow,
   FlowConfig,
   Step,

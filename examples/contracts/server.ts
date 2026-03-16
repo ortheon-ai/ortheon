@@ -56,6 +56,18 @@ export const serverApi: Record<string, ApiContract> = {
       // body: { runId: string }
     },
   },
+  runAll: {
+    method: 'POST',
+    path: '/api/run-all',
+    purpose: 'Start an async run for every discovered suite. Supports excludeTags to skip suites by tag.',
+    request: {
+      // body: { headed?: boolean, baseUrl?: string, timeoutMs?: number, excludeTags?: string[] } -- all optional
+    },
+    response: {
+      status: 201,
+      // body: { runIds: string[] }
+    },
+  },
   listRuns: {
     method: 'GET',
     path: '/api/runs',

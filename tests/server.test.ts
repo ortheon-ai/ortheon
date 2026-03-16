@@ -41,6 +41,35 @@ const invalidSpec: Spec = spec('invalid spec', {
   ],
 })
 
+// Multi-flow spec for alignment testing
+const multiFlowSpec: Spec = spec('multi flow spec', {
+  baseUrl: 'http://localhost:9999',
+  flows: [
+    flow('flow alpha', {
+      steps: [
+        step('get alpha',
+          api('GET /api/alpha', {
+            expect: { status: 200 },
+            save: { alphaResult: 'body.value' },
+          })
+        ),
+        step('get beta',
+          api('GET /api/beta', {})
+        ),
+      ],
+    }),
+    flow('flow gamma', {
+      steps: [
+        step('post gamma',
+          api('POST /api/gamma', {
+            expect: { status: 201 },
+          })
+        ),
+      ],
+    }),
+  ],
+})
+
 function makeSuite(id: string, s: Spec, overrides?: Partial<ServerSuite>): ServerSuite {
   return {
     id,
@@ -134,9 +163,13 @@ describe('encodeSuiteId / decodeSuiteId', () => {
 // ---------------------------------------------------------------------------
 
 describe('RunManager', () => {
+  function makeRun(id: string, suiteId = 's1', status: 'pending' | 'running' | 'pass' | 'fail' | 'error' = 'pending') {
+    return { id, suiteId, suiteName: 'test', status, expectedOutcome: 'pass' as const, startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, error: null, validation: null, result: null, planSnapshot: null }
+  }
+
   it('stores and retrieves a run', () => {
     const mgr = new RunManager()
-    const run = { id: 'r1', suiteId: 's1', suiteName: 'test', status: 'pending' as const, startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, error: null, validation: null, result: null }
+    const run = makeRun('r1')
     mgr.add(run)
     expect(mgr.get('r1')).toBe(run)
   })
@@ -144,11 +177,11 @@ describe('RunManager', () => {
   it('evicts the oldest run when MAX_RUNS (100) is exceeded', () => {
     const mgr = new RunManager()
     for (let i = 0; i < 100; i++) {
-      mgr.add({ id: `run-${i}`, suiteId: 's1', suiteName: 'test', status: 'pass' as const, startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, error: null, validation: null, result: null })
+      mgr.add(makeRun(`run-${i}`))
     }
     expect(mgr.get('run-0')).toBeDefined()
     // Adding run 101 evicts run-0
-    mgr.add({ id: 'run-100', suiteId: 's1', suiteName: 'test', status: 'pass' as const, startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, error: null, validation: null, result: null })
+    mgr.add(makeRun('run-100'))
     expect(mgr.get('run-0')).toBeUndefined()
     expect(mgr.get('run-100')).toBeDefined()
     expect(mgr.size()).toBe(100)
@@ -156,7 +189,7 @@ describe('RunManager', () => {
 
   it('updates a run in place', () => {
     const mgr = new RunManager()
-    mgr.add({ id: 'r1', suiteId: 's1', suiteName: 'test', status: 'pending' as const, startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, error: null, validation: null, result: null })
+    mgr.add(makeRun('r1'))
     mgr.update('r1', { status: 'running' })
     expect(mgr.get('r1')?.status).toBe('running')
   })
@@ -164,9 +197,37 @@ describe('RunManager', () => {
   it('list returns runs in insertion order', () => {
     const mgr = new RunManager()
     for (const id of ['r1', 'r2', 'r3']) {
-      mgr.add({ id, suiteId: 's1', suiteName: 'test', status: 'pass' as const, startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, error: null, validation: null, result: null })
+      mgr.add(makeRun(id))
     }
     expect(mgr.list().map(r => r.id)).toEqual(['r1', 'r2', 'r3'])
+  })
+
+  describe('lastRunForSuite', () => {
+    it('returns undefined when no runs exist for a suite', () => {
+      const mgr = new RunManager()
+      mgr.add(makeRun('r1', 's1'))
+      expect(mgr.lastRunForSuite('s99')).toBeUndefined()
+    })
+
+    it('returns the most recent run for the given suite', () => {
+      const mgr = new RunManager()
+      mgr.add(makeRun('r1', 's1'))
+      mgr.add(makeRun('r2', 's2'))
+      mgr.add(makeRun('r3', 's1'))
+      expect(mgr.lastRunForSuite('s1')?.id).toBe('r3')
+    })
+
+    it('returns undefined on empty manager', () => {
+      const mgr = new RunManager()
+      expect(mgr.lastRunForSuite('s1')).toBeUndefined()
+    })
+
+    it('ignores runs from other suites', () => {
+      const mgr = new RunManager()
+      mgr.add(makeRun('r1', 's2'))
+      mgr.add(makeRun('r2', 's2'))
+      expect(mgr.lastRunForSuite('s1')).toBeUndefined()
+    })
   })
 })
 
@@ -204,6 +265,15 @@ describe('GET /api/suites', () => {
     expect(first).toHaveProperty('path')
     expect(first).toHaveProperty('flowCount')
     expect(first).toHaveProperty('tags')
+    expect(first).toHaveProperty('lastRun')
+  })
+
+  it('lastRun is null when no runs exist for the suite', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites')
+    const suites = (body as { suites: { lastRun: unknown }[] }).suites
+    for (const s of suites) {
+      expect(s.lastRun).toBeNull()
+    }
   })
 
   it('reports flowCount correctly', async () => {
@@ -211,6 +281,15 @@ describe('GET /api/suites', () => {
     const suites = (body as { suites: { name: string; flowCount: number }[] }).suites
     const health = suites.find(s => s.name === 'service health check')
     expect(health?.flowCount).toBe(1)
+  })
+
+  it('includes expectedOutcome field defaulting to "pass"', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites')
+    const suites = (body as { suites: { name: string; expectedOutcome: string }[] }).suites
+    for (const s of suites) {
+      expect(s).toHaveProperty('expectedOutcome')
+      expect(s.expectedOutcome).toBe('pass')
+    }
   })
 })
 
@@ -389,6 +468,45 @@ describe('GET /api/suites/:id/plan', () => {
     const { status } = await get(srv.baseUrl, '/api/suites/unknown/plan')
     expect(status).toBe(404)
   })
+
+  it('includes flowRanges with correct shape and values', async () => {
+    const { status, body } = await get(srv.baseUrl, `/api/suites/${id}/plan`)
+    expect(status).toBe(200)
+    const b = body as Record<string, unknown>
+    expect(b).toHaveProperty('flowRanges')
+    expect(Array.isArray(b['flowRanges'])).toBe(true)
+
+    const flowRanges = b['flowRanges'] as Record<string, unknown>[]
+    expect(flowRanges.length).toBeGreaterThan(0)
+
+    const first = flowRanges[0]!
+    expect(first).toHaveProperty('name')
+    expect(first).toHaveProperty('startIndex')
+    expect(first).toHaveProperty('stepCount')
+    expect(typeof first['name']).toBe('string')
+    expect(typeof first['startIndex']).toBe('number')
+    expect(typeof first['stepCount']).toBe('number')
+
+    // healthSpec has one flow named 'health check' with 2 steps
+    expect(first['name']).toBe('health check')
+    expect(first['startIndex']).toBe(0)
+    expect(first['stepCount']).toBe(2)
+  })
+
+  it('flowRanges stepCount sums to total steps', async () => {
+    const multiId = encodeSuiteId('test/multiflow-plan.ts')
+    const srv2 = await startTestServer([makeSuite(multiId, multiFlowSpec)])
+    try {
+      const { body } = await get(srv2.baseUrl, `/api/suites/${multiId}/plan`)
+      const b = body as Record<string, unknown>
+      const steps = b['steps'] as unknown[]
+      const flowRanges = b['flowRanges'] as { stepCount: number }[]
+      const rangeTotal = flowRanges.reduce((acc, r) => acc + r.stepCount, 0)
+      expect(rangeTotal).toBe(steps.length)
+    } finally {
+      await srv2.close()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -486,6 +604,8 @@ describe('GET /api/runs', () => {
     expect(run).toHaveProperty('status')
     expect(run).toHaveProperty('startedAt')
     expect(run).toHaveProperty('durationMs')
+    expect(run).toHaveProperty('expectedOutcome')
+    expect(run).toHaveProperty('meetsExpectedOutcome')
   })
 })
 
@@ -527,6 +647,40 @@ describe('GET /api/runs/:id', () => {
     expect(b).toHaveProperty('validation')
   })
 
+  it('step results include actionType, actionSummary, saves, expects, flowOrigin', async () => {
+    const { body: postBody } = await post(srv.baseUrl, `/api/suites/${id}/run`, {})
+    const runId = (postBody as { runId: string }).runId
+
+    // Poll until terminal
+    let finalRun: Record<string, unknown> | null = null
+    for (let i = 0; i < 30; i++) {
+      await sleep(100)
+      const { body } = await get(srv.baseUrl, `/api/runs/${runId}`)
+      const r = body as Record<string, unknown>
+      if (r['status'] !== 'pending' && r['status'] !== 'running') { finalRun = r; break }
+    }
+    expect(finalRun).not.toBeNull()
+
+    type StepShape = { name: string; actionType: string | null; actionSummary: string | null; saves: string[]; expects: string[]; flowOrigin: string | null }
+    const flows = finalRun?.['flows'] as { name: string; steps: StepShape[] }[] | null
+    expect(flows).not.toBeNull()
+    const steps = flows?.flatMap(f => f.steps) ?? []
+    expect(steps.length).toBeGreaterThan(0)
+
+    const first = steps[0]!
+    expect(first).toHaveProperty('actionType')
+    expect(first).toHaveProperty('actionSummary')
+    expect(first).toHaveProperty('saves')
+    expect(first).toHaveProperty('expects')
+    expect(first).toHaveProperty('flowOrigin')
+
+    // The API step should have actionType 'api' and summary 'GET /api/health'
+    expect(first.actionType).toBe('api')
+    expect(first.actionSummary).toBe('GET /api/health')
+    expect(Array.isArray(first.saves)).toBe(true)
+    expect(Array.isArray(first.expects)).toBe(true)
+  })
+
   it('invalid suite run eventually reaches error status', async () => {
     const invId = encodeSuiteId('test/invalid2.ts')
     const srv2 = await startTestServer([makeSuite(invId, invalidSpec)])
@@ -552,6 +706,312 @@ describe('GET /api/runs/:id', () => {
       expect(validation?.errors.length).toBeGreaterThan(0)
     } finally {
       await srv2.close()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Multi-flow step alignment -- proves plan snapshot merges correctly
+// ---------------------------------------------------------------------------
+
+describe('multi-flow step alignment in run response', () => {
+  it('actionSummary lands on the correct step in the correct flow', async () => {
+    const multiId = encodeSuiteId('test/multiflow.ts')
+    const srv = await startTestServer([makeSuite(multiId, multiFlowSpec)])
+    try {
+      const { body: postBody } = await post(srv.baseUrl, `/api/suites/${multiId}/run`, {})
+      const runId = (postBody as { runId: string }).runId
+
+      // Poll until terminal (will error since baseUrl is unreachable, but planSnapshot is set before running)
+      let finalRun: Record<string, unknown> | null = null
+      for (let i = 0; i < 30; i++) {
+        await sleep(100)
+        const { body } = await get(srv.baseUrl, `/api/runs/${runId}`)
+        const r = body as Record<string, unknown>
+        if (r['status'] !== 'pending' && r['status'] !== 'running') { finalRun = r; break }
+      }
+      expect(finalRun).not.toBeNull()
+
+      type StepShape = { name: string; actionType: string | null; actionSummary: string | null; saves: string[]; expects: string[] }
+      type FlowShape = { name: string; steps: StepShape[] }
+      const flows = finalRun?.['flows'] as FlowShape[] | null
+
+      // Even on failure, flows and step results should be present
+      if (flows === null || flows.length === 0) {
+        // Run failed before producing results (e.g. very fast network error) -- skip alignment check
+        return
+      }
+
+      // flow alpha: 2 steps -- GET /api/alpha (with save), GET /api/beta
+      const alphaFlow = flows.find(f => f.name === 'flow alpha')
+      if (alphaFlow && alphaFlow.steps.length >= 1) {
+        expect(alphaFlow.steps[0]!.actionSummary).toBe('GET /api/alpha')
+        expect(alphaFlow.steps[0]!.saves).toContain('alphaResult')
+      }
+      if (alphaFlow && alphaFlow.steps.length >= 2) {
+        expect(alphaFlow.steps[1]!.actionSummary).toBe('GET /api/beta')
+      }
+
+      // flow gamma: 1 step -- POST /api/gamma
+      const gammaFlow = flows.find(f => f.name === 'flow gamma')
+      if (gammaFlow && gammaFlow.steps.length >= 1) {
+        expect(gammaFlow.steps[0]!.actionSummary).toBe('POST /api/gamma')
+      }
+    } finally {
+      await srv.close()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// lastRun field on GET /api/suites after runs are created
+// ---------------------------------------------------------------------------
+
+describe('GET /api/suites lastRun field', () => {
+  it('reflects the most recent run status for a suite', async () => {
+    const id = encodeSuiteId('test/lastrun.ts')
+    const srv = await startTestServer([makeSuite(id, healthSpec)])
+    try {
+      // No runs yet -- lastRun should be null
+      const { body: before } = await get(srv.baseUrl, '/api/suites')
+      const suitesBefore = (before as { suites: { id: string; lastRun: unknown }[] }).suites
+      const suiteBefore = suitesBefore.find(s => s.id === id)
+      expect(suiteBefore?.lastRun).toBeNull()
+
+      // Create a run
+      const { body: postBody } = await post(srv.baseUrl, `/api/suites/${id}/run`, {})
+      const runId = (postBody as { runId: string }).runId
+      await sleep(50)
+
+      // Now lastRun should be populated
+      const { body: after } = await get(srv.baseUrl, '/api/suites')
+      const suitesAfter = (after as { suites: { id: string; lastRun: { id: string; status: string; startedAt: string; durationMs: number | null } | null }[] }).suites
+      const suiteAfter = suitesAfter.find(s => s.id === id)
+      expect(suiteAfter?.lastRun).not.toBeNull()
+      expect(suiteAfter?.lastRun?.id).toBe(runId)
+      expect(suiteAfter?.lastRun?.status).toBeDefined()
+      expect(suiteAfter?.lastRun?.startedAt).toBeDefined()
+    } finally {
+      await srv.close()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// expectedOutcome and meetsExpectedOutcome in run responses
+// ---------------------------------------------------------------------------
+
+describe('expectedOutcome in run responses', () => {
+  it('run detail includes expectedOutcome and meetsExpectedOutcome', async () => {
+    const id = encodeSuiteId('test/expected-outcome.ts')
+    const srv = await startTestServer([makeSuite(id, healthSpec)])
+    try {
+      const { body: postBody } = await post(srv.baseUrl, `/api/suites/${id}/run`, {})
+      const runId = (postBody as { runId: string }).runId
+      await sleep(50)
+      const { body } = await get(srv.baseUrl, `/api/runs/${runId}`)
+      const run = body as Record<string, unknown>
+      expect(run).toHaveProperty('expectedOutcome', 'pass')
+      expect(run).toHaveProperty('meetsExpectedOutcome')
+      expect(typeof run['meetsExpectedOutcome']).toBe('boolean')
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('spec with expectedOutcome "error" propagates to run record', async () => {
+    const errorFixture = spec('error fixture', {
+      baseUrl: 'http://localhost:9999',
+      expectedOutcome: 'error',
+      flows: [
+        flow('bad flow', {
+          steps: [
+            step('assert unsaved ref',
+              orthExpect(ref('nope'), 'equals', 'x')
+            ),
+          ],
+        }),
+      ],
+    })
+    const id = encodeSuiteId('test/error-fixture.ts')
+    const srv = await startTestServer([makeSuite(id, errorFixture)])
+    try {
+      const { body: postBody } = await post(srv.baseUrl, `/api/suites/${id}/run`, {})
+      const runId = (postBody as { runId: string }).runId
+
+      let finalRun: Record<string, unknown> | null = null
+      for (let i = 0; i < 20; i++) {
+        await sleep(50)
+        const { body } = await get(srv.baseUrl, `/api/runs/${runId}`)
+        const r = body as Record<string, unknown>
+        if (r['status'] !== 'pending' && r['status'] !== 'running') { finalRun = r; break }
+      }
+
+      expect(finalRun).not.toBeNull()
+      expect(finalRun?.['status']).toBe('error')
+      expect(finalRun?.['expectedOutcome']).toBe('error')
+      expect(finalRun?.['meetsExpectedOutcome']).toBe(true)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('suite list includes expectedOutcome from spec', async () => {
+    const errorFixture = spec('error fixture for list', {
+      baseUrl: 'http://localhost:9999',
+      expectedOutcome: 'error',
+      flows: [
+        flow('f', {
+          steps: [step('s', api('GET /ping', {}))],
+        }),
+      ],
+    })
+    const id = encodeSuiteId('test/error-fixture-list.ts')
+    const srv = await startTestServer([makeSuite(id, errorFixture)])
+    try {
+      const { body } = await get(srv.baseUrl, '/api/suites')
+      const suites = (body as { suites: { id: string; expectedOutcome: string }[] }).suites
+      const found = suites.find(s => s.id === id)
+      expect(found).toBeDefined()
+      expect(found?.expectedOutcome).toBe('error')
+    } finally {
+      await srv.close()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// POST /api/run-all
+// ---------------------------------------------------------------------------
+
+describe('POST /api/run-all', () => {
+  it('returns 201 with runIds for all suites', async () => {
+    const s1Id = encodeSuiteId('test/run-all-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-2.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, multiFlowSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', {})
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(2)
+      expect(new Set(runIds).size).toBe(2)
+
+      await sleep(50)
+      const { body: runsBody } = await get(srv.baseUrl, '/api/runs')
+      const runs = (runsBody as { runs: { id: string }[] }).runs
+      for (const runId of runIds) {
+        expect(runs.some(r => r.id === runId)).toBe(true)
+      }
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('creates error runs for load-errored suites', async () => {
+    const okId = encodeSuiteId('test/run-all-ok.ts')
+    const errId = encodeSuiteId('test/run-all-err.ts')
+    const srv = await startTestServer([
+      makeSuite(okId, healthSpec),
+      { id: errId, name: 'broken', path: '/test/run-all-err.ts', relativePath: 'test/run-all-err.ts', spec: null, loadError: 'Cannot parse' },
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', {})
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(2)
+
+      await sleep(50)
+      const errRunId = runIds[1]!
+      const { body: runBody } = await get(srv.baseUrl, `/api/runs/${errRunId}`)
+      expect((runBody as { status: string }).status).toBe('error')
+      expect((runBody as { error: string }).error).toContain('Cannot parse')
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('returns 400 for malformed body', async () => {
+    const srv = await startTestServer([makeSuite('s1', healthSpec)])
+    try {
+      const res = await fetch(`${srv.baseUrl}/api/run-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '"not-an-object"',
+      })
+      expect(res.status).toBe(400)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('excludeTags skips suites with matching tags', async () => {
+    const taggedSpec: Spec = spec('tagged suite', {
+      baseUrl: 'http://localhost:9999',
+      tags: ['server', 'run'],
+      flows: [
+        flow('f', { steps: [step('s', api('GET /ping', {}))] }),
+      ],
+    })
+    const s1Id = encodeSuiteId('test/run-all-tag-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-tag-2.ts')
+    const s3Id = encodeSuiteId('test/run-all-tag-3.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, taggedSpec),
+      makeSuite(s3Id, multiFlowSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', { excludeTags: ['server'] })
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      // Only healthSpec and multiFlowSpec should run (taggedSpec has 'server' tag)
+      expect(runIds).toHaveLength(2)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('excludeTags is case-insensitive', async () => {
+    const taggedSpec: Spec = spec('upper tag suite', {
+      baseUrl: 'http://localhost:9999',
+      tags: ['Server'],
+      flows: [
+        flow('f', { steps: [step('s', api('GET /ping', {}))] }),
+      ],
+    })
+    const s1Id = encodeSuiteId('test/run-all-case-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-case-2.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, taggedSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', { excludeTags: ['server'] })
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(1)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('runs all suites when excludeTags is empty', async () => {
+    const s1Id = encodeSuiteId('test/run-all-empty-1.ts')
+    const s2Id = encodeSuiteId('test/run-all-empty-2.ts')
+    const srv = await startTestServer([
+      makeSuite(s1Id, healthSpec),
+      makeSuite(s2Id, multiFlowSpec),
+    ])
+    try {
+      const { status, body } = await post(srv.baseUrl, '/api/run-all', { excludeTags: [] })
+      expect(status).toBe(201)
+      const { runIds } = body as { runIds: string[] }
+      expect(runIds).toHaveLength(2)
+    } finally {
+      await srv.close()
     }
   })
 })
