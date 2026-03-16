@@ -152,17 +152,17 @@ function statusBadge(status) {
 }
 
 // Returns a badge that visually reflects whether the run met its expected outcome.
-// If meetsExpected is true, the badge renders as success (green) regardless of raw status.
-// If meetsExpected is false, the raw status badge renders (which will be red if it's a fail/error).
+// meetsExpected is null while the run is still in progress (pending/running).
 function outcomeBadge(status, meetsExpected, expectedOutcome) {
+  if (meetsExpected === null || meetsExpected === undefined) {
+    return statusBadge(status)
+  }
   if (meetsExpected) {
     if (expectedOutcome === 'pass') {
       return statusBadge(status)
     }
-    // Non-default expected outcome met: show as green with a note
     return `<span class="status-badge status-pass" data-testid="run-status" data-status="${escapeHtml(status)}">✔ ${escapeHtml(status)} · expected</span>`
   }
-  // Did not meet expected outcome -- always alarming
   if (expectedOutcome !== 'pass') {
     return `<span class="status-badge status-fail" data-testid="run-status" data-status="${escapeHtml(status)}">✘ ${escapeHtml(status)} · unexpected</span>`
   }
@@ -302,7 +302,7 @@ function renderSuiteGrid(suites, searchVal) {
           const exact = new Date(s.lastRun.startedAt).toLocaleString()
           const dur = s.lastRun.durationMs !== null ? ` · ${durationLabel(s.lastRun.durationMs)}` : ''
           const expectedOutcome = s.expectedOutcome ?? 'pass'
-          const meetsExpected = s.lastRun.status === expectedOutcome
+          const meetsExpected = s.lastRun.meetsExpectedOutcome
           lastRunHtml = `
             <div class="suite-card-last-run" data-testid="suite-last-run">
               ${outcomeBadge(s.lastRun.status, meetsExpected, expectedOutcome)}
@@ -418,7 +418,7 @@ async function renderRunsList() {
           <a class="run-row" href="/runs/${encodeURIComponent(r.id)}" data-link>
             <div class="run-row-suite">${escapeHtml(r.suiteName)}</div>
             <div class="run-row-meta">
-              ${outcomeBadge(r.status, r.meetsExpectedOutcome ?? (r.status === expectedOutcome), expectedOutcome)}
+              ${outcomeBadge(r.status, r.meetsExpectedOutcome, expectedOutcome)}
               <span class="run-row-time" title="${escapeHtml(exact)}">${escapeHtml(ago)}</span>
               ${dur ? `<span class="run-row-dur">${escapeHtml(dur)}</span>` : ''}
             </div>
@@ -884,7 +884,7 @@ function renderRun(run) {
   const isTerminal = run.status !== 'pending' && run.status !== 'running'
   const startExact = new Date(run.startedAt).toLocaleString()
   const expectedOutcome = run.expectedOutcome ?? 'pass'
-  const meetsExpected = run.meetsExpectedOutcome ?? (run.status === expectedOutcome)
+  const meetsExpected = run.meetsExpectedOutcome
 
   const progressHtml = run.totalSteps !== null ? `
     <div class="run-progress">
