@@ -1086,6 +1086,10 @@ function renderStepRow(runId, stepKey, s) {
 
 function render(path) {
   stopPolling()
+  if (_searchDebounceTimer !== null) {
+    clearTimeout(_searchDebounceTimer)
+    _searchDebounceTimer = null
+  }
   _allSuites = null
   _activeTag = null
 
