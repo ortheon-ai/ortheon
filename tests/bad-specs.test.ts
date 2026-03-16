@@ -53,6 +53,27 @@ describe('bad-spec fixtures', () => {
       expect(result.valid).toBe(false)
       expect(result.errors.some(e => e.message.includes('nonExistentLoginFlow'))).toBe(true)
     })
+
+    it('reports use() that omits a required input declared by the referenced flow', () => {
+      const s = spec('missing required input', {
+        flows: [
+          flow('login', {
+            inputs: { email: 'string', password: 'secret' },
+            steps: [step('goto', browser('goto', { url: '/login' }))],
+          }),
+          flow('main', {
+            // password is not provided
+            steps: [step('do login', use('login', { email: 'buyer@example.com' }))],
+          }),
+        ],
+      })
+
+      const result = validateStructure(s)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e =>
+        e.message.includes('password') && e.message.includes('missing required input')
+      )).toBe(true)
+    })
   })
 
   describe('duplicate flow name', () => {

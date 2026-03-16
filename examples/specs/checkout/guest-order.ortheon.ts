@@ -1,6 +1,6 @@
-import { spec, flow, step, api, expect, ref, env, secret, bearer, section } from '../../../src/dsl.js'
+import { spec, flow, step, api, expect, ref, env, secret, bearer, section, existsCheck } from '../../../src/dsl.js'
 import { authApi } from '../../contracts/auth.js'
-import { ordersApi } from '../../contracts/orders.js'
+import { ordersApi, productsApi } from '../../contracts/orders.js'
 import { products } from '../../data/products.js'
 
 // API-only order flow.
@@ -11,6 +11,7 @@ export default spec('guest order via API', {
   apis: {
     ...authApi,
     ...ordersApi,
+    ...productsApi,
   },
   data: {
     product: products.defaultWidget,
@@ -20,6 +21,27 @@ export default spec('guest order via API', {
   flows: [
     flow('api order flow', {
       steps: [
+        section('product catalog', [
+          // Demonstrates: query params -- server filters the catalog by SKU
+          step('list products filtered by sku',
+            api('listProducts', {
+              query: {
+                sku: ref('data.product.sku'),
+              },
+              expect: {
+                status: 200,
+              },
+              save: {
+                catalogResults: 'body',
+              },
+            })
+          ),
+          // Demonstrates: exists matcher -- confirms results were returned
+          step('filtered catalog should return results',
+            expect(ref('catalogResults'), 'exists')
+          ),
+        ]),
+
         section('authentication', [
           step('acquire auth token',
             api('login', {
@@ -50,6 +72,7 @@ export default spec('guest order via API', {
               expect: {
                 status: 201,
                 body: {
+                  id: existsCheck(),
                   status: 'confirmed',
                 },
               },
@@ -58,6 +81,10 @@ export default spec('guest order via API', {
                 orderStatus: 'body.status',
               },
             })
+          ),
+          // Demonstrates: matches matcher -- orderId is a UUID
+          step('order id should be a UUID',
+            expect(ref('orderId'), 'matches', '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
           ),
           step('order status should be confirmed',
             expect(ref('orderStatus'), 'equals', 'confirmed')
@@ -81,8 +108,13 @@ export default spec('guest order via API', {
               },
             })
           ),
-          step('fetched order status should be confirmed',
-            expect(ref('fetchedOrder.status'), 'equals', 'confirmed')
+          // Demonstrates: contains matcher (object subset) -- checks a subset of the fetched order
+          step('fetched order should contain confirmed status',
+            expect(ref('fetchedOrder'), 'contains', { status: 'confirmed' })
+          ),
+          // Demonstrates: notExists matcher -- order body has no "cancelReason" field
+          step('confirmed order should have no cancel reason',
+            expect(ref('fetchedOrder.cancelReason'), 'notExists')
           ),
           step('verify persistence and side effects',
             api('verifyOrderEffects', {

@@ -112,6 +112,10 @@ export class RuntimeContext {
    *   "body.items[0].sku" -> nested
    *   "status"       -> the HTTP status code (as number, from ApiResponse)
    *   "headers.x-request-id" -> a response header
+   *
+   * Throws for unrecognised path prefixes -- the validator warns at compile time,
+   * this throw ensures typos surface immediately at runtime rather than silently
+   * propagating undefined into downstream refs.
    */
   extractFromResponse(
     savePath: string,
@@ -127,7 +131,10 @@ export class RuntimeContext {
       const headerName = savePath.slice(8)
       return response.headers[headerName]
     }
-    return undefined
+    throw new Error(
+      `Invalid save path "${savePath}". ` +
+      'Expected "body", "status", "body.<path>", or "headers.<name>".'
+    )
   }
 
   /** Resolve a DynamicValue to a concrete value. */
@@ -212,13 +219,6 @@ export class RuntimeContext {
   /** Load data object into context under the "data" namespace. */
   loadData(data: Record<string, unknown>): void {
     this.store['data'] = this.resolveDeep(data)
-  }
-
-  /** Load flow inputs into context (flat, for use inside an inlined flow). */
-  loadInputs(inputs: Record<string, unknown>): void {
-    for (const [k, v] of Object.entries(inputs)) {
-      this.store[k] = this.resolveDeep(v)
-    }
   }
 
   /** Snapshot the full store (for debugging / expanded plan output). */

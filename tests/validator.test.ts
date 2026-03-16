@@ -144,6 +144,93 @@ describe('validateStructure (pass 1)', () => {
       const result = validateStructure(s)
       expect(result.errors.some(e => e.message.includes('nonexistent'))).toBe(true)
     })
+
+    it('reports a missing required input declared by the referenced flow', () => {
+      const s = spec('test', {
+        flows: [
+          flow('login', {
+            inputs: { email: 'string', password: 'secret' },
+            steps: [step('goto', browser('goto', { url: '/login' }))],
+          }),
+          flow('main', {
+            // password input is missing
+            steps: [step('do login', use('login', { email: 'a@b.com' }))],
+          }),
+        ],
+      })
+      const result = validateStructure(s)
+      expect(result.errors.some(e =>
+        e.message.includes('password') && e.message.includes('missing required input')
+      )).toBe(true)
+    })
+
+    it('warns when use() provides an input not declared by the referenced flow', () => {
+      const s = spec('test', {
+        flows: [
+          flow('login', {
+            inputs: { email: 'string' },
+            steps: [step('goto', browser('goto', { url: '/login' }))],
+          }),
+          flow('main', {
+            steps: [step('do login', use('login', { email: 'a@b.com', extra: 'surprise' }))],
+          }),
+        ],
+      })
+      const result = validateStructure(s)
+      expect(result.errors).toHaveLength(0)
+      expect(result.warnings.some(w =>
+        w.message.includes('extra') && w.message.includes('undeclared input')
+      )).toBe(true)
+    })
+
+    it('passes when a flow has no declared inputs and use() provides none', () => {
+      const s = spec('test', {
+        flows: [
+          flow('setup', { steps: [step('goto', browser('goto', { url: '/setup' }))] }),
+          flow('main', { steps: [step('run setup', use('setup'))] }),
+        ],
+      })
+      expect(validateStructure(s).errors).toHaveLength(0)
+    })
+  })
+
+  describe('save path validation', () => {
+    it('passes for "body", "status", "body.<field>", and "headers.<name>" save paths', () => {
+      const s = spec('test', {
+        flows: [
+          flow('main', {
+            steps: [
+              step('fetch', api('GET /api/resource', {
+                save: {
+                  full: 'body',
+                  statusCode: 'status',
+                  id: 'body.id',
+                  requestId: 'headers.x-request-id',
+                },
+              })),
+            ],
+          }),
+        ],
+      })
+      const result = validateStructure(s)
+      expect(result.warnings.filter(w => w.message.includes('Save path'))).toHaveLength(0)
+    })
+
+    it('warns for unrecognised save path expressions', () => {
+      const s = spec('test', {
+        flows: [
+          flow('main', {
+            steps: [
+              step('fetch', api('GET /api/resource', {
+                save: { val: 'something.weird' },
+              })),
+            ],
+          }),
+        ],
+      })
+      const result = validateStructure(s)
+      expect(result.warnings.some(w => w.message.includes('something.weird'))).toBe(true)
+    })
   })
 })
 

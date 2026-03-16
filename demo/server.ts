@@ -103,8 +103,10 @@ app.post('/api/auth/login', (req, res) => {
 // API: products
 // ---------------------------------------------------------------------------
 
-app.get('/api/products', (_req, res) => {
-  res.json(products)
+app.get('/api/products', (req, res) => {
+  const skuFilter = req.query['sku'] as string | undefined
+  const result = skuFilter ? products.filter(p => p.sku === skuFilter) : products
+  res.json(result)
 })
 
 // ---------------------------------------------------------------------------
