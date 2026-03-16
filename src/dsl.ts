@@ -119,8 +119,13 @@ export function use(flowName: string, inputs?: Record<string, Resolvable<unknown
 // Structural builders
 // ---------------------------------------------------------------------------
 
-export function step(name: string, action: StepAction, options?: { retries?: number }): Step {
-  return { name, action, ...(options?.retries !== undefined ? { retries: options.retries } : {}) }
+export function step(name: string, action: StepAction, options?: { retries?: number; retryIntervalMs?: number }): Step {
+  return {
+    name,
+    action,
+    ...(options?.retries !== undefined ? { retries: options.retries } : {}),
+    ...(options?.retryIntervalMs !== undefined ? { retryIntervalMs: options.retryIntervalMs } : {}),
+  }
 }
 
 export function section(name: string, steps: Step[]): Section {

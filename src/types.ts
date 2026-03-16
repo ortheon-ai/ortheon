@@ -111,6 +111,7 @@ export type Step = {
   name: string
   action: StepAction
   retries?: number
+  retryIntervalMs?: number
 }
 
 export type Section = {
@@ -203,9 +204,19 @@ export type ExecutableStep = {
   flowOrigin?: string
   action: ResolvedApiStep | ResolvedBrowserStep | ResolvedExpectStep
   retries: number
+  retryIntervalMs?: number
   saves: Record<string, string>
   inlineExpect?: InlineExpect
   expects: ResolvedExpectation[]
+}
+
+// A FlowRange records how steps in the flat plan map back to authored flows.
+// startIndex + stepCount allow slicing plan.steps into per-flow groups.
+// Flows that expand to zero steps still appear here (stepCount: 0).
+export type FlowRange = {
+  name: string
+  startIndex: number
+  stepCount: number
 }
 
 export type ExecutionPlan = {
@@ -214,6 +225,7 @@ export type ExecutionPlan = {
   apis: Record<string, ApiContract>
   data: Record<string, unknown>
   steps: ExecutableStep[]
+  flowRanges: FlowRange[]
 }
 
 // ---------------------------------------------------------------------------

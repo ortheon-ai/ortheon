@@ -7,7 +7,13 @@ export const serverApi: Record<string, ApiContract> = {
   listSuites: {
     method: 'GET',
     path: '/api/suites',
-    purpose: 'List all discovered spec suites with summary metadata',
+    purpose: 'List all discovered spec suites with summary metadata. Sorted lexically by path.',
+    request: {
+      query: {
+        name: 'optional -- case-insensitive substring match on suite name',
+        tag:  'optional -- case-insensitive exact match against suite tags',
+      },
+    },
     response: {
       status: 200,
       // body: { suites: [{ id, name, path, flowCount, tags, hasError }] }

@@ -218,10 +218,30 @@ export function createApp(
 
   // -------------------------------------------------------------------------
   // GET /api/suites -- list all discovered suites
+  //
+  // Optional query params:
+  //   ?name=<substring>  case-insensitive substring match on suite name
+  //   ?tag=<value>       case-insensitive exact match against suite tags
+  //
+  // Results are sorted lexically by relativePath (stable across requests).
   // -------------------------------------------------------------------------
 
-  app.get('/api/suites', (_req, res) => {
-    const result = suites.map(s => ({
+  app.get('/api/suites', (req, res) => {
+    const nameFilter = typeof req.query['name'] === 'string' ? req.query['name'].toLowerCase() : null
+    const tagFilter  = typeof req.query['tag']  === 'string' ? req.query['tag'].toLowerCase()  : null
+
+    const sorted = [...suites].sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+
+    const filtered = sorted.filter(s => {
+      if (nameFilter !== null && !s.name.toLowerCase().includes(nameFilter)) return false
+      if (tagFilter  !== null) {
+        const tags = s.spec?.tags ?? []
+        if (!tags.some(t => t.toLowerCase() === tagFilter)) return false
+      }
+      return true
+    })
+
+    const result = filtered.map(s => ({
       id: s.id,
       name: s.name,
       path: s.relativePath,

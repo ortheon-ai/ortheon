@@ -91,6 +91,19 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
     }
   }
 
+  // Regroup step results back into authored flows using the plan's flow ranges.
+  // Zero-step flows produce an empty FlowResult (passed/failed/skipped all 0).
+  const flowResults = plan.flowRanges.map(range => {
+    const steps = stepResults.slice(range.startIndex, range.startIndex + range.stepCount)
+    return {
+      name: range.name,
+      steps,
+      passed: steps.filter(s => s.status === 'pass').length,
+      failed: steps.filter(s => s.status === 'fail').length,
+      skipped: steps.filter(s => s.status === 'skip').length,
+    }
+  })
+
   const passed = stepResults.filter(s => s.status === 'pass').length
   const failedCount = stepResults.filter(s => s.status === 'fail').length
   const skipped = stepResults.filter(s => s.status === 'skip').length
@@ -98,15 +111,7 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
   return {
     specName: spec.name,
     status: failed ? 'fail' : 'pass',
-    flows: [
-      {
-        name: spec.name,
-        steps: stepResults,
-        passed,
-        failed: failedCount,
-        skipped,
-      },
-    ],
+    flows: flowResults,
     totalSteps: plan.steps.length,
     passedSteps: passed,
     failedSteps: failedCount,
@@ -142,8 +147,10 @@ async function runStep(
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
       if (attempt < maxAttempts) {
-        // Small delay between retries
-        await sleep(500 * attempt)
+        // Fixed interval when retryIntervalMs is set (useful for polling).
+        // Default is linear backoff (500ms × attempt) for error retries.
+        // Callers that want fixed-interval polling should always set retryIntervalMs explicitly.
+        await sleep(step.retryIntervalMs ?? (500 * attempt))
       }
     }
   }

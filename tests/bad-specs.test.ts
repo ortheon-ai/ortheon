@@ -359,6 +359,71 @@ describe('bad-spec fixtures', () => {
     })
   })
 
+  describe('invalid retries / retryIntervalMs', () => {
+    it('reports negative retries', () => {
+      const s = spec('bad retries', {
+        flows: [
+          flow('main', {
+            steps: [
+              step('call', api('GET /api/health', {}), { retries: -1 }),
+            ],
+          }),
+        ],
+      })
+
+      const result = validateStructure(s)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.message.includes('retries'))).toBe(true)
+    })
+
+    it('reports non-integer retries', () => {
+      const s = spec('bad retries float', {
+        flows: [
+          flow('main', {
+            steps: [
+              step('call', api('GET /api/health', {}), { retries: 1.5 }),
+            ],
+          }),
+        ],
+      })
+
+      const result = validateStructure(s)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.message.includes('retries'))).toBe(true)
+    })
+
+    it('reports negative retryIntervalMs', () => {
+      const s = spec('bad interval', {
+        flows: [
+          flow('main', {
+            steps: [
+              step('call', api('GET /api/health', {}), { retries: 1, retryIntervalMs: -100 }),
+            ],
+          }),
+        ],
+      })
+
+      const result = validateStructure(s)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.message.includes('retryIntervalMs'))).toBe(true)
+    })
+
+    it('accepts retryIntervalMs of 0', () => {
+      const s = spec('zero interval', {
+        flows: [
+          flow('main', {
+            steps: [
+              step('call', api('GET /api/health', {}), { retries: 1, retryIntervalMs: 0 }),
+            ],
+          }),
+        ],
+      })
+
+      const result = validateStructure(s)
+      expect(result.valid).toBe(true)
+    })
+  })
+
   describe('use() in a section targeting a nonexistent flow', () => {
     it('reports use() inside a section referencing a missing flow', () => {
       const s = spec('bad section use', {

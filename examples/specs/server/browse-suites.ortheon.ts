@@ -13,6 +13,7 @@ import { serverApi } from '../../contracts/server.js'
 const KNOWN_SUITE_NAME = 'service health check'
 const KNOWN_STEP_SUBSTRING = 'GET /api/health'
 const KNOWN_CONTRACT_NAME = 'health'
+const INVALID_FIXTURE_NAME = 'invalid: bad refs fixture'
 
 export default spec('ortheon server: browse and expand', {
   baseUrl: env('ORTHEON_SERVER_URL'),
@@ -187,6 +188,65 @@ export default spec('ortheon server: browse and expand', {
               params: { name: 'doesNotExist' },
               expect: { status: 404 },
             })
+          ),
+        ]),
+      ],
+    }),
+
+    flow('api: error and edge cases', {
+      steps: [
+        section('unknown suite 404', [
+          step('get non-existent suite',
+            api('getSuite', {
+              params: { id: 'does-not-exist-at-all' },
+              expect: { status: 404 },
+            })
+          ),
+        ]),
+
+        section('unknown run 404', [
+          step('get non-existent run',
+            api('getRun', {
+              params: { runId: '00000000-0000-0000-0000-000000000000' },
+              expect: { status: 404 },
+            })
+          ),
+        ]),
+
+        section('suite filtering', [
+          step('filter suites by known name',
+            api('listSuites', {
+              query: { name: KNOWN_SUITE_NAME },
+              expect: {
+                status: 200,
+                body: { suites: existsCheck() },
+              },
+              save: {
+                filteredSuiteCount: 'body.suites.length',
+                filteredSuiteName: 'body.suites[0].name',
+              },
+            })
+          ),
+          step('filtered result is non-empty',
+            expect(ref('filteredSuiteCount'), 'exists')
+          ),
+          step('filtered suite name matches known name',
+            expect(ref('filteredSuiteName'), 'equals', KNOWN_SUITE_NAME)
+          ),
+          step('filter suites by known tag',
+            api('listSuites', {
+              query: { tag: 'invalid-fixture' },
+              expect: {
+                status: 200,
+                body: { suites: existsCheck() },
+              },
+              save: {
+                tagFilteredSuiteName: 'body.suites[0].name',
+              },
+            })
+          ),
+          step('tag-filtered suite name is the invalid fixture',
+            expect(ref('tagFilteredSuiteName'), 'equals', INVALID_FIXTURE_NAME)
           ),
         ]),
       ],
