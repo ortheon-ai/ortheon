@@ -75,7 +75,19 @@ function escapeHtml(s) {
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard view
+// Dashboard tab bar
+// ---------------------------------------------------------------------------
+
+function renderTabBar(activeTab) {
+  return `
+    <div class="tab-bar">
+      <a class="tab${activeTab === 'suites' ? ' active' : ''}" href="/" data-link>Suites</a>
+      <a class="tab${activeTab === 'contracts' ? ' active' : ''}" href="/contracts" data-link>Contracts</a>
+    </div>`
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard – Suites view
 // ---------------------------------------------------------------------------
 
 async function renderDashboard() {
@@ -92,33 +104,173 @@ async function renderDashboard() {
 
   const { suites } = data
 
-  if (suites.length === 0) {
-    setRoot('<div class="empty-state">No spec files discovered. Check the glob pattern used to start the server.</div>')
-    return
-  }
-
-  const cards = suites.map(s => {
-    const tags = (s.tags || []).map(t => `<span class="badge badge-tag">${escapeHtml(t)}</span>`).join('')
-    const errorBadge = s.hasError ? '<span class="badge badge-error">load error</span>' : ''
-    const flowBadge = `<span class="badge badge-flow">${s.flowCount} flow${s.flowCount !== 1 ? 's' : ''}</span>`
-    return `
-      <a class="suite-card" href="/suites/${encodeURIComponent(s.id)}" data-link data-testid="suite-card" data-suite-id="${escapeHtml(s.id)}">
-        <div class="suite-card-name">${escapeHtml(s.name)}</div>
-        <div class="suite-card-path">${escapeHtml(s.path)}</div>
-        <div class="suite-card-meta">${flowBadge}${tags}${errorBadge}</div>
-      </a>`
-  }).join('\n')
+  const cards = suites.length === 0
+    ? '<div class="empty-state">No spec files discovered. Check the glob pattern used to start the server.</div>'
+    : suites.map(s => {
+        const tags = (s.tags || []).map(t => `<span class="badge badge-tag">${escapeHtml(t)}</span>`).join('')
+        const errorBadge = s.hasError ? '<span class="badge badge-error">load error</span>' : ''
+        const flowBadge = `<span class="badge badge-flow">${s.flowCount} flow${s.flowCount !== 1 ? 's' : ''}</span>`
+        return `
+          <a class="suite-card" href="/suites/${encodeURIComponent(s.id)}" data-link data-testid="suite-card" data-suite-id="${escapeHtml(s.id)}">
+            <div class="suite-card-name">${escapeHtml(s.name)}</div>
+            <div class="suite-card-path">${escapeHtml(s.path)}</div>
+            <div class="suite-card-meta">${flowBadge}${tags}${errorBadge}</div>
+          </a>`
+      }).join('\n')
 
   setRoot(`
     <div>
-      <div class="section-header">
-        <div>
-          <div class="section-title">Spec Suites</div>
-          <div class="section-subtitle">${suites.length} suite${suites.length !== 1 ? 's' : ''} discovered</div>
-        </div>
+      ${renderTabBar('suites')}
+      <div class="tab-content-header">
+        <div class="section-subtitle">${suites.length} suite${suites.length !== 1 ? 's' : ''} discovered</div>
       </div>
       <div class="suite-grid" data-testid="suite-list">
         ${cards}
+      </div>
+    </div>
+  `)
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard – Contracts list view
+// ---------------------------------------------------------------------------
+
+function methodBadge(method) {
+  return `<span class="method-badge method-${method.toLowerCase()}">${escapeHtml(method)}</span>`
+}
+
+async function renderContractsList() {
+  setBreadcrumb('')
+  setRoot('<div class="loading-state"><span class="spinner">◌</span> Loading contracts&hellip;</div>')
+
+  let data
+  try {
+    data = await api('/api/contracts')
+  } catch (err) {
+    setRoot(`<div class="error-state">Failed to load contracts: ${escapeHtml(err.message)}</div>`)
+    return
+  }
+
+  const { contracts } = data
+
+  const cards = contracts.length === 0
+    ? '<div class="empty-state">No contracts declared across loaded suites.</div>'
+    : contracts.map(c => {
+        const suiteBadge = `<span class="badge badge-flow">${c.suiteCount} suite${c.suiteCount !== 1 ? 's' : ''}</span>`
+        const purpose = c.purpose ? `<div class="contract-card-purpose">${escapeHtml(c.purpose)}</div>` : ''
+        return `
+          <a class="contract-card" href="/contracts/${encodeURIComponent(c.name)}" data-link data-testid="contract-card">
+            <div class="contract-card-top">
+              ${methodBadge(c.method)}
+              <span class="contract-card-name">${escapeHtml(c.name)}</span>
+            </div>
+            <div class="contract-card-path">${escapeHtml(c.path)}</div>
+            ${purpose}
+            <div class="contract-card-meta">${suiteBadge}</div>
+          </a>`
+      }).join('\n')
+
+  setRoot(`
+    <div>
+      ${renderTabBar('contracts')}
+      <div class="tab-content-header">
+        <div class="section-subtitle">${contracts.length} contract${contracts.length !== 1 ? 's' : ''} declared</div>
+      </div>
+      <div class="suite-grid" data-testid="contract-list">
+        ${cards}
+      </div>
+    </div>
+  `)
+}
+
+// ---------------------------------------------------------------------------
+// Contract detail view
+// ---------------------------------------------------------------------------
+
+async function renderContractDetail(name) {
+  setBreadcrumb(`<span class="crumb"><a href="/contracts" data-link>Contracts</a></span><span class="crumb-sep"> / </span><span class="crumb-current" id="contract-name-crumb">…</span>`)
+  setRoot('<div class="loading-state"><span class="spinner">◌</span> Loading contract&hellip;</div>')
+
+  let contract
+  try {
+    contract = await api(`/api/contracts/${encodeURIComponent(name)}`)
+  } catch (err) {
+    setRoot(`<div class="error-state">${escapeHtml(err.message)}</div>`)
+    return
+  }
+
+  document.getElementById('contract-name-crumb').textContent = contract.name
+
+  const purposeHtml = contract.purpose
+    ? `<div class="contract-detail-purpose">${escapeHtml(contract.purpose)}</div>`
+    : ''
+
+  function renderKvTable(obj) {
+    if (!obj || typeof obj !== 'object') return ''
+    const rows = Object.entries(obj)
+    if (rows.length === 0) return ''
+    return `<table class="kv-table">${rows.map(([k, v]) =>
+      `<tr><td class="kv-key">${escapeHtml(k)}</td><td class="kv-val">${escapeHtml(String(v))}</td></tr>`
+    ).join('')}</table>`
+  }
+
+  const req = contract.request
+  const reqSections = []
+  if (req) {
+    if (req.params && Object.keys(req.params).length > 0) {
+      reqSections.push(`<div class="contract-section-label">Path params</div>${renderKvTable(req.params)}`)
+    }
+    if (req.query && Object.keys(req.query).length > 0) {
+      reqSections.push(`<div class="contract-section-label">Query params</div>${renderKvTable(req.query)}`)
+    }
+    if (req.headers && Object.keys(req.headers).length > 0) {
+      reqSections.push(`<div class="contract-section-label">Headers</div>${renderKvTable(req.headers)}`)
+    }
+  }
+
+  const requestCard = reqSections.length > 0
+    ? `<div class="info-card"><div class="info-card-label">Request</div>${reqSections.join('')}</div>`
+    : ''
+
+  const resp = contract.response
+  const responseCard = resp
+    ? `<div class="info-card"><div class="info-card-label">Response</div>${
+        resp.status !== undefined && resp.status !== null
+          ? `<div class="contract-section-label">Status</div><span class="contract-status-code">${escapeHtml(String(resp.status))}</span>`
+          : '<span class="info-list-empty">No response metadata declared</span>'
+      }</div>`
+    : ''
+
+  const suiteItems = (contract.suites || []).map(s =>
+    `<li><a href="/suites/${encodeURIComponent(s.id)}" data-link>${escapeHtml(s.name)}</a></li>`
+  ).join('')
+
+  const suitesCard = `
+    <div class="info-card">
+      <div class="info-card-label">Used in suites</div>
+      ${suiteItems
+        ? `<ul class="info-list">${suiteItems}</ul>`
+        : '<span class="info-list-empty">none</span>'}
+    </div>`
+
+  setRoot(`
+    <div class="suite-detail" data-testid="contract-detail">
+      <div class="detail-header">
+        <div>
+          <div class="detail-title contract-detail-title">
+            ${methodBadge(contract.method)}
+            <span>${escapeHtml(contract.name)}</span>
+          </div>
+          <div class="detail-meta">
+            <span class="detail-path">${escapeHtml(contract.path)}</span>
+          </div>
+        </div>
+      </div>
+      ${purposeHtml}
+      <div class="info-grid">
+        ${requestCard}
+        ${responseCard}
+        ${suitesCard}
       </div>
     </div>
   `)
@@ -150,7 +302,7 @@ async function renderSuiteDetail(id) {
     : '<li class="info-list-empty">none</li>'
 
   const apiList = suite.apiNames.length
-    ? suite.apiNames.map(n => `<li>${escapeHtml(n)}</li>`).join('')
+    ? suite.apiNames.map(n => `<li><a href="/contracts/${encodeURIComponent(n)}" data-link>${escapeHtml(n)}</a></li>`).join('')
     : '<li class="info-list-empty">none</li>'
 
   const tagBadges = (suite.tags || []).map(t => `<span class="badge badge-tag">${escapeHtml(t)}</span>`).join('')
@@ -382,8 +534,9 @@ function renderRun(run) {
 function render(path) {
   stopPolling()
 
-  const suiteMatch = path.match(/^\/suites\/([^/]+)\/?$/)
-  const runMatch   = path.match(/^\/runs\/([^/]+)\/?$/)
+  const suiteMatch    = path.match(/^\/suites\/([^/]+)\/?$/)
+  const runMatch      = path.match(/^\/runs\/([^/]+)\/?$/)
+  const contractMatch = path.match(/^\/contracts\/([^/]+)\/?$/)
 
   if (suiteMatch) {
     const id = decodeURIComponent(suiteMatch[1])
@@ -391,6 +544,11 @@ function render(path) {
   } else if (runMatch) {
     const id = decodeURIComponent(runMatch[1])
     renderRunView(id)
+  } else if (contractMatch) {
+    const name = decodeURIComponent(contractMatch[1])
+    renderContractDetail(name)
+  } else if (path === '/contracts') {
+    renderContractsList()
   } else {
     renderDashboard()
   }

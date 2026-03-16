@@ -554,3 +554,186 @@ code, pre, .mono { font-family: var(--mono); }
 }
 
 .run-validation-item { color: var(--text); padding: 3px 0; }
+
+/* ============================================================
+   Tab bar (dashboard Suites / Contracts)
+   ============================================================ */
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  margin-bottom: -1px;
+  text-decoration: none;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.tab:hover { color: var(--text); text-decoration: none; }
+
+.tab.active {
+  color: var(--text);
+  background: var(--bg);
+  border-color: var(--border);
+  border-bottom-color: var(--bg);
+}
+
+.tab-content-header {
+  margin-bottom: 16px;
+}
+
+/* ============================================================
+   Method badges
+   ============================================================ */
+
+.method-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.method-get    { background: #0d2d10; color: var(--green);  border: 1px solid #1a6e20; }
+.method-post   { background: #1f3a5c; color: var(--accent); border: 1px solid #1f6feb; }
+.method-put    { background: #2d1f00; color: var(--orange); border: 1px solid #6e4600; }
+.method-patch  { background: #2d1b69; color: var(--purple); border: 1px solid #6e40c9; }
+.method-delete { background: #3d1a1a; color: var(--red);    border: 1px solid #6e2323; }
+
+/* ============================================================
+   Contract cards (contracts list)
+   ============================================================ */
+
+.contract-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-decoration: none;
+  color: inherit;
+}
+
+.contract-card:hover {
+  border-color: var(--accent-dim);
+  background: var(--bg-hover);
+  text-decoration: none;
+}
+
+.contract-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.contract-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.contract-card-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contract-card-purpose {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.contract-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   Contract detail
+   ============================================================ */
+
+.contract-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.contract-detail-purpose {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+}
+
+.contract-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 10px 0 6px;
+}
+
+.contract-section-label:first-child { margin-top: 0; }
+
+.kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.kv-table tr + tr td { border-top: 1px solid var(--border-light); }
+
+.kv-key {
+  font-family: var(--mono);
+  color: var(--text-muted);
+  padding: 4px 8px 4px 0;
+  white-space: nowrap;
+  width: 40%;
+  vertical-align: top;
+}
+
+.kv-val {
+  font-family: var(--mono);
+  color: var(--text);
+  padding: 4px 0;
+  word-break: break-word;
+}
+
+.contract-status-code {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--green);
+}

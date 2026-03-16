@@ -7,7 +7,7 @@ import { compile, formatExpandedPlan } from '../compiler.js'
 import { validate } from '../validator.js'
 import { runSpec } from '../runner.js'
 import { loadSpecFile } from '../loader.js'
-import type { Spec, SpecResult, ExecutableStep, BrowserStep } from '../types.js'
+import type { Spec, SpecResult, ExecutableStep, BrowserStep, ApiContract } from '../types.js'
 
 const __serverDir = dirname(fileURLToPath(import.meta.url))
 
@@ -198,6 +198,21 @@ export function createApp(
   const suiteMap = new Map<string, ServerSuite>()
   for (const s of suites) suiteMap.set(s.id, s)
 
+  // Build a cross-suite contract index: name → { contract, suites[] }
+  type ContractEntry = { contract: ApiContract; suites: { id: string; name: string }[] }
+  const contractIndex = new Map<string, ContractEntry>()
+  for (const s of suites) {
+    if (s.spec === null) continue
+    for (const [name, contract] of Object.entries(s.spec.apis ?? {})) {
+      const existing = contractIndex.get(name)
+      if (existing === undefined) {
+        contractIndex.set(name, { contract, suites: [{ id: s.id, name: s.name }] })
+      } else {
+        existing.suites.push({ id: s.id, name: s.name })
+      }
+    }
+  }
+
   const pagesDir = join(__serverDir, 'pages')
   app.use(express.static(pagesDir))
 
@@ -294,6 +309,43 @@ export function createApp(
         warnings: validation.warnings.map(w => w.message),
       },
       renderedPlan: formatExpandedPlan(plan),
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // GET /api/contracts -- list all contracts aggregated across suites
+  // -------------------------------------------------------------------------
+
+  app.get('/api/contracts', (_req, res) => {
+    const result = Array.from(contractIndex.entries()).map(([name, entry]) => ({
+      name,
+      method: entry.contract.method,
+      path: entry.contract.path,
+      purpose: entry.contract.purpose ?? null,
+      suiteCount: entry.suites.length,
+    }))
+    res.json({ contracts: result })
+  })
+
+  // -------------------------------------------------------------------------
+  // GET /api/contracts/:name -- full contract detail with using suites
+  // -------------------------------------------------------------------------
+
+  app.get('/api/contracts/:name', (req, res) => {
+    const entry = contractIndex.get(req.params['name'] ?? '')
+    if (entry === undefined) {
+      res.status(404).json({ error: 'Contract not found' })
+      return
+    }
+    const { contract, suites: usingSuites } = entry
+    res.json({
+      name: req.params['name'],
+      method: contract.method,
+      path: contract.path,
+      purpose: contract.purpose ?? null,
+      request: contract.request ?? null,
+      response: contract.response ?? null,
+      suites: usingSuites,
     })
   })
 
