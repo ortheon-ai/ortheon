@@ -329,6 +329,9 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
     if (step.retries > 0) {
       lines.push(`       retries: ${step.retries}`)
     }
+    if (step.retryIntervalMs !== undefined) {
+      lines.push(`       retryIntervalMs: ${step.retryIntervalMs}`)
+    }
   }
 
   return lines.join('\n')

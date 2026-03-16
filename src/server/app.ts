@@ -316,6 +316,7 @@ export function createApp(
       actionType: s.action.__type as 'api' | 'browser' | 'expect',
       actionSummary: formatActionSummary(s),
       retries: s.retries,
+      ...(s.retryIntervalMs !== undefined ? { retryIntervalMs: s.retryIntervalMs } : {}),
       saves: Object.keys(s.saves),
       expects: formatExpectSummaries(s),
     }))
