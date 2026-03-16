@@ -13,21 +13,33 @@ src/
   runner.ts          Sequential step execution with retry, save, assert
   context.ts         Runtime save/ref store with dot-path resolution
   reporter.ts        Console + JSON output
-  cli.ts             CLI: ortheon run <glob>, ortheon expand <file>
+  loader.ts          Shared glob resolution and spec file loading (used by CLI and server)
+  cli.ts             CLI: ortheon run <glob>, ortheon expand <file>, ortheon serve <glob> [--port] [--base-url]
   index.ts           Public API re-exports
   executors/
     browser.ts       Playwright wrapper (9 actions)
     api.ts           Native fetch wrapper
     assert.ts        5-matcher assertion engine
+  server/
+    app.ts           Express app: suite discovery, RunManager, 6 API routes, SPA serving
+    pages/
+      index.html     SPA shell
+      styles.css     Dark dev-tool aesthetic
+      app.js         Client-side routing, fetch, DOM rendering (dashboard/detail/run views)
 demo/                Express app for runnable examples
-examples/            Contracts, data, flows, and 3 canonical specs
-tests/               Vitest unit tests (context, assert, compiler, validator, golden, bad-specs)
+examples/
+  contracts/         API contract catalogs (auth, orders, payments, server)
+  data/              Named data catalogs
+  flows/             Reusable flows
+  specs/             Canonical specs including server self-tests (browse-suites, run-suites)
+scripts/             Automation scripts (run-examples, run-server-tests)
+tests/               Vitest unit tests (context, assert, compiler, validator, golden, bad-specs, server)
 ```
 
 ## Documentation
 
 - **[README.md](README.md)** -- Installation, quick start, full DSL reference, CLI reference, auth model, scaling doctrine, recommended file structure.
-- **[docs/architecture.md](docs/architecture.md)** -- Three-layer architecture, compiler internals (contract resolution, use() expansion, compile-time ref substitution), validator passes, runtime context mechanics, executor details, key design decisions.
+- **[docs/architecture.md](docs/architecture.md)** -- Four-layer architecture (authoring, compilation, execution, server), compiler internals (contract resolution, use() expansion, compile-time ref substitution), validator passes, runtime context mechanics, executor details, server layer (suite discovery, RunManager, SPA), key design decisions.
 - **[docs/writing-specs.md](docs/writing-specs.md)** -- Practical authoring guide: contracts, data catalogs, flows, API steps, browser steps, assertions, retries, naming conventions, what not to do.
 
 ## Core rules
@@ -50,9 +62,11 @@ tests/               Vitest unit tests (context, assert, compiler, validator, go
 ## Commands
 
 ```bash
-npm test              # 104 unit tests
+npm test              # 134 unit tests
 npm run examples      # 3 specs against demo app (19 steps)
 npm run demo          # Start demo server at :3737
+npm run serve         # Start ortheon web server against examples/
+npm run server-tests  # End-to-end self-test of the web server
 npm run typecheck     # TypeScript --noEmit
 npm run build         # Compile to dist/
 ```

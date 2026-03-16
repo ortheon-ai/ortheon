@@ -215,7 +215,7 @@ APP_BASE_URL=http://localhost:3000 ortheon run 'specs/**/*.ortheon.ts'
 
 ## CLI
 
-Two commands, `run` and `expand`.
+Three commands: `run`, `expand`, and `serve`.
 
 ### `ortheon run <glob>`
 
@@ -246,6 +246,71 @@ STEPS (11 total):
     3. [browser authentication] browser login > fill email (flow: login)
        action: browser(type, "[data-testid=email]")
    ...
+```
+
+### `ortheon serve <glob>`
+
+Start a local web server for browsing, expanding, and running specs interactively.
+
+```bash
+ortheon serve 'specs/**/*.ortheon.ts' --port 4000 --base-url http://localhost:3000
+```
+
+| Flag               | Description                                             | Default  |
+| ------------------ | ------------------------------------------------------- | -------- |
+| `--port <port>`    | Port to listen on                                       | `4000`   |
+| `--base-url <url>` | Sets `APP_BASE_URL` env var for spec runs               | --       |
+
+**Environment variables set automatically:**
+
+| Variable             | Value                         | Purpose                                      |
+| -------------------- | ----------------------------- | -------------------------------------------- |
+| `APP_BASE_URL`       | value of `--base-url`         | Picked up by specs using `env('APP_BASE_URL')` |
+| `ORTHEON_SERVER_URL` | `http://localhost:<port>`     | Picked up by server self-test specs          |
+
+Specs resolve their own `baseUrl` from whichever env var they declare. The `--base-url` flag does not override a spec's `baseUrl` globally -- it sets `APP_BASE_URL` in the environment so specs that opt into it can pick it up.
+
+## Web server
+
+`ortheon serve` discovers all matching spec files once at startup and serves a minimal web UI at `http://localhost:4000`.
+
+### Views
+
+| Path             | Description                                                   |
+| ---------------- | ------------------------------------------------------------- |
+| `/`              | Dashboard -- card grid of all discovered suites               |
+| `/suites/:id`    | Suite detail -- metadata, expanded plan, Run button           |
+| `/runs/:id`      | Run view -- live-polling step results with pass/fail/skip     |
+
+### API routes
+
+All under `/api`. Suite IDs are base64url-encoded relative file paths.
+
+| Method | Path                      | Description                                     |
+| ------ | ------------------------- | ----------------------------------------------- |
+| GET    | `/api/suites`             | List all suites (id, name, path, flowCount, tags) |
+| GET    | `/api/suites/:id`         | Suite metadata (flowNames, stepCount, apiNames) |
+| GET    | `/api/suites/:id/plan`    | Expanded plan + validation diagnostics          |
+| POST   | `/api/suites/:id/run`     | Start an async run, returns `{ runId }`         |
+| GET    | `/api/runs`               | List all runs (summaries)                       |
+| GET    | `/api/runs/:id`           | Full run detail with per-step results           |
+
+POST body for `/run` (all optional): `{ headed?, baseUrl?, timeoutMs? }`.
+
+The server always validates before running. If validation fails, the run is created with `status: "error"` and diagnostics are included. Invalid specs are refused execution.
+
+Runs are stored in memory only (lost on restart). The last 100 runs are retained; oldest are evicted first.
+
+### Running it
+
+```bash
+# Terminal 1: start the app under test
+APP_BASE_URL=http://localhost:3000 npm run dev
+
+# Terminal 2: start the ortheon server
+APP_BASE_URL=http://localhost:3000 ortheon serve 'specs/**/*.ortheon.ts' --base-url http://localhost:3000
+
+# Open http://localhost:4000
 ```
 
 ## DSL reference
@@ -478,9 +543,12 @@ cd ortheon
 npm install
 npx playwright install chromium
 
-npm test                # 104 unit tests (vitest)
+npm test                # 134 unit tests (vitest)
 npm run examples        # 3 specs against demo app (19 steps)
-npm run demo            # start demo server at :3737
+npm run dev             # demo server (:3737) + ortheon web server (:4000), ctrl+c kills both
+npm run demo            # start demo server at :3737 only
+npm run serve           # start ortheon web server against examples/ only
+npm run server-tests    # end-to-end self-test of the web server
 npm run typecheck       # typescript --noEmit
 ```
 
