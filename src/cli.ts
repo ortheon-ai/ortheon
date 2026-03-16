@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { compile, formatExpandedPlan } from './compiler.js'
 import { validate } from './validator.js'
 import { runSpec } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
-import { resolveGlob } from './loader.js'
+import { resolveGlob, loadSpecFile } from './loader.js'
 import type { Spec, SpecResult } from './types.js'
 
 const packageJson = JSON.parse(
@@ -166,21 +164,13 @@ program
 // ---------------------------------------------------------------------------
 
 async function loadSpecForCli(file: string): Promise<Spec | null> {
-  const absPath = resolve(file)
-  const fileUrl = pathToFileURL(absPath).href
-  try {
-    const mod = await import(fileUrl) as { default?: Spec } | Spec
-    const s = (mod as { default?: Spec }).default ?? (mod as Spec)
-    if (!s || typeof s !== 'object' || !('flows' in s)) {
-      console.error(`File "${file}" does not export a valid Ortheon spec (expected a default export from spec(...))`)
-      return null
-    }
-    return s
-  } catch (err) {
+  const result = await loadSpecFile(file)
+  if (result.error !== null) {
     console.error(`Failed to load spec file "${file}":`)
-    console.error(err instanceof Error ? err.message : String(err))
+    console.error(result.error)
     return null
   }
+  return result.spec
 }
 
 program.parse()
