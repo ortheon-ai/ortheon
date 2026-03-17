@@ -215,18 +215,46 @@ MY_APP_URL=http://localhost:3000 ortheon run 'specs/**/*.ortheon.ts'
 
 ## CLI
 
-Three commands: `run`, `expand`, and `serve`.
+Four commands: `run`, `list`, `expand`, and `serve`.
 
-### `ortheon run <glob>`
+### `ortheon run [glob]`
 
-Run spec files matching a glob pattern.
+Two modes:
 
-| Flag                | Description             | Default   |
-| ------------------- | ----------------------- | --------- |
-| `--reporter <type>` | `console` or `json`     | `console` |
-| `--headed`          | Show the browser window | --        |
-| `--timeout <ms>`    | Default step timeout    | `30000`   |
-| `--skip-validation` | Skip pre-run validation | --        |
+**Local** — run spec files matching a glob pattern:
+```bash
+ortheon run 'specs/**/*.ortheon.ts'
+```
+
+**Remote** — fetch an execution plan from an Ortheon server and run it locally:
+```bash
+ortheon run --from http://specs.company.com --suite <id>
+```
+
+| Flag                | Description                                       | Default   |
+| ------------------- | ------------------------------------------------- | --------- |
+| `--from <url>`      | Base URL of an Ortheon server to fetch a plan from | --       |
+| `--suite <id>`      | Suite ID to fetch (required with `--from`)        | --        |
+| `--reporter <type>` | `console` or `json`                               | `console` |
+| `--headed`          | Show the browser window                           | --        |
+| `--timeout <ms>`    | Default step timeout                              | `30000`   |
+| `--skip-validation` | Skip pre-run validation (local mode only)         | --        |
+
+In remote mode, `env()` and `secret()` values in the plan are resolved from your own environment. The server never sees your secrets.
+
+### `ortheon list`
+
+Discover suites available on a remote Ortheon server:
+
+```bash
+ortheon list --from http://specs.company.com
+```
+
+| Flag           | Description                         | Default |
+| -------------- | ----------------------------------- | ------- |
+| `--from <url>` | Base URL of the Ortheon server      | (required) |
+
+Prints a table of suite IDs, names, and tags. Use the ID with `ortheon run --from ... --suite <id>`.
 
 ### `ortheon expand <file>`
 
@@ -249,7 +277,7 @@ STEPS (11 total):
 
 ### `ortheon serve <glob>`
 
-Start a local web server for browsing, expanding, and running specs interactively.
+Start a local web server for browsing and distributing specs as executable plans.
 
 ```bash
 ortheon serve 'specs/**/*.ortheon.ts' --port 4000
@@ -259,53 +287,73 @@ ortheon serve 'specs/**/*.ortheon.ts' --port 4000
 | ------------------ | ------------------------------------------------------- | -------- |
 | `--port <port>`    | Port to listen on                                       | `4000`   |
 
-Each spec resolves its own `baseUrl` from whichever `env()` key it declares. Set the required environment variables before starting the server.
-
 `ORTHEON_SERVER_URL` is set automatically to `http://localhost:<port>` so server self-test specs can reach the Ortheon API.
 
 ## Web server
 
-`ortheon serve` discovers all matching spec files once at startup and serves a minimal web UI at `http://localhost:4000`.
+`ortheon serve` discovers all matching spec files once at startup and serves a minimal web UI at `http://localhost:4000`. **The server does not execute specs.** Execution is the CLI's responsibility.
+
+### Trust boundary
+
+| Responsibility      | Owner  |
+| ------------------- | ------ |
+| Spec authorship     | Server |
+| Plan compilation    | Server |
+| Plan distribution   | Server |
+| Execution           | CLI    |
+| env vars / secrets  | CLI    |
+
+The server never sees the user's environment variables or secrets. The CLI resolves `env()` and `secret()` markers from its own process environment.
 
 ### Views
 
-| Path             | Description                                                   |
-| ---------------- | ------------------------------------------------------------- |
-| `/`              | Dashboard -- card grid of all discovered suites               |
-| `/suites/:id`    | Suite detail -- metadata, expanded plan, Run button           |
-| `/runs/:id`      | Run view -- live-polling step results with pass/fail/skip     |
+| Path             | Description                                                         |
+| ---------------- | ------------------------------------------------------------------- |
+| `/`              | Dashboard -- card grid of all discovered suites                     |
+| `/suites/:id`    | Suite detail -- metadata, expanded plan, CLI command, plan download |
+| `/contracts`     | Contract catalog                                                    |
+| `/contracts/:name` | Contract detail                                                   |
 
 ### API routes
 
 All under `/api`. Suite IDs are base64url-encoded relative file paths.
 
-| Method | Path                      | Description                                     |
-| ------ | ------------------------- | ----------------------------------------------- |
-| GET    | `/api/suites`             | List all suites, sorted by path. Optional `?name=` (substring) and `?tag=` (exact) filters. |
-| GET    | `/api/suites/:id`         | Suite metadata (flowNames, stepCount, apiNames) |
-| GET    | `/api/suites/:id/plan`    | Expanded plan + validation diagnostics          |
-| POST   | `/api/suites/:id/run`     | Start an async run, returns `{ runId }`         |
-| GET    | `/api/runs`               | List all runs (summaries)                       |
-| GET    | `/api/runs/:id`           | Full run detail with per-flow, per-step results |
+| Method | Path                              | Description                                                 |
+| ------ | --------------------------------- | ----------------------------------------------------------- |
+| GET    | `/api/suites`                     | List all suites, sorted by path. Optional `?name=` (substring) and `?tag=` (exact) filters. |
+| GET    | `/api/suites/:id`                 | Suite metadata (flowNames, stepCount, apiNames)             |
+| GET    | `/api/suites/:id/plan`            | Browse-oriented expanded plan + validation diagnostics (for web UI) |
+| GET    | `/api/suites/:id/execution-plan`  | Versioned execution plan artifact for CLI consumption       |
+| GET    | `/api/contracts`                  | All contracts aggregated across suites                      |
+| GET    | `/api/contracts/:name`            | Full contract detail                                        |
 
-POST `/api/suites/:id/run` and POST `/api/run-all` accept an optional JSON body. No run overrides (e.g. `baseUrl`, `headed`, `timeoutMs`) are accepted — the server uses the spec and process environment only (security). For run-all, body may include `{ excludeTags?: string[] }` to skip suites with those tags.
+`GET /api/suites/:id/execution-plan` returns:
+```json
+{
+  "planVersion": 1,
+  "plan": { "specName": "...", "baseUrl": { "__type": "env", "name": "MY_APP_URL" }, "steps": [...], ... },
+  "validation": { "errors": [], "warnings": [] },
+  "expectedOutcome": "pass",
+  "tags": [],
+  "safety": null
+}
+```
 
-`GET /api/runs/:id` returns a `flows` array that mirrors the authored top-level flows in the spec. Each flow entry contains its steps, pass/fail/skip counts, and the original flow name.
-
-The server always validates before running. If validation fails, the run is created with `status: "error"` and diagnostics are included. Invalid specs are refused execution.
-
-Runs are stored in memory only (lost on restart). The last 100 runs are retained; oldest are evicted first.
+`env()` and `secret()` markers in the plan are preserved unresolved — the CLI resolves them locally.
 
 ### Running it
 
 ```bash
 # Terminal 1: start the app under test
-npm run dev
-
-# Terminal 2: start the ortheon server
-MY_APP_URL=http://localhost:3000 ortheon serve 'specs/**/*.ortheon.ts'
+MY_APP_URL=http://localhost:3000 \
+  ortheon serve 'specs/**/*.ortheon.ts'
 
 # Open http://localhost:4000
+# Then run a suite via CLI:
+ortheon run --from http://localhost:4000 --suite <id>
+
+# Or discover suites first:
+ortheon list --from http://localhost:4000
 ```
 
 ## DSL reference
@@ -552,13 +600,14 @@ cd ortheon
 npm install
 npx playwright install chromium
 
-npm test                # 134 unit tests (vitest)
-npm run examples        # 3 specs against demo app (19 steps)
-npm run dev             # demo server (:3737) + ortheon web server (:4000), ctrl+c kills both
-npm run demo            # start demo server at :3737 only
-npm run serve           # start ortheon web server against examples/ only
-npm run server-tests    # end-to-end self-test of the web server
-npm run typecheck       # typescript --noEmit
+npm test                    # 191 unit tests (vitest)
+npm run examples            # 3 specs against demo app (19 steps)
+npm run dev                 # demo server (:3737) + ortheon web server (:4000), ctrl+c kills both
+npm run demo                # start demo server at :3737 only
+npm run serve               # start ortheon web server against examples/ only
+npm run server-tests        # end-to-end self-test of the web server (browse-suites: API + browser)
+npm run cli-remote-tests    # end-to-end test of the remote-plan CLI path (list + fetch plan + run)
+npm run typecheck           # typescript --noEmit
 ```
 
 ## License

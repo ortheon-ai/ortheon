@@ -2,8 +2,10 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { runSpec } from '../src/runner.js'
+import { runSpec, runPlan } from '../src/runner.js'
+import { compile } from '../src/compiler.js'
 import { spec, flow, step, api, expect as orth_expect, ref, env } from '../src/dsl.js'
+import type { ExecutionPlan } from '../src/types.js'
 
 // ---------------------------------------------------------------------------
 // Minimal test HTTP server
@@ -542,5 +544,176 @@ describe('runSpec', () => {
       expect(stepResult.status).toBe('fail')
       expect(stepResult.error).toMatch(/abort|timeout|network/i)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// runPlan -- executes a pre-compiled ExecutionPlan
+// ---------------------------------------------------------------------------
+
+describe('runPlan', () => {
+  let server: Server | null = null
+
+  afterEach(() => {
+    server?.close()
+    server = null
+  })
+
+  it('executes a pre-compiled plan and returns pass', async () => {
+    const { server: s, url } = await startTestServer({
+      'GET /api/health': { status: 200, body: { status: 'ok' } },
+    })
+    server = s
+
+    const theSpec = spec('health-plan', {
+      baseUrl: url,
+      flows: [
+        flow('main', {
+          steps: [step('check health', api('GET /api/health', { expect: { status: 200 } }))],
+        }),
+      ],
+    })
+
+    const plan = compile(theSpec)
+    const result = await runPlan(plan)
+
+    expect(result.status).toBe('pass')
+    expect(result.specName).toBe('health-plan')
+    expect(result.passedSteps).toBe(1)
+    expect(result.flows).toHaveLength(1)
+    expect(result.flows[0]!.name).toBe('main')
+  })
+
+  it('returns fail when a step fails', async () => {
+    const { server: s, url } = await startTestServer({
+      'GET /api/health': { status: 500, body: {} },
+    })
+    server = s
+
+    const theSpec = spec('fail-plan', {
+      baseUrl: url,
+      flows: [
+        flow('main', {
+          steps: [step('check', api('GET /api/health', { expect: { status: 200 } }))],
+        }),
+      ],
+    })
+
+    const result = await runPlan(compile(theSpec))
+    expect(result.status).toBe('fail')
+    expect(result.failedSteps).toBe(1)
+  })
+
+  it('resolves baseUrl from env() marker in the plan', async () => {
+    const { server: s, url } = await startTestServer({
+      'GET /ping': { status: 200, body: {} },
+    })
+    server = s
+
+    process.env['PLAN_TEST_URL'] = url
+    try {
+      const theSpec = spec('env-url-plan', {
+        baseUrl: env('PLAN_TEST_URL'),
+        flows: [
+          flow('main', {
+            steps: [step('ping', api('GET /ping', { expect: { status: 200 } }))],
+          }),
+        ],
+      })
+
+      const result = await runPlan(compile(theSpec))
+      expect(result.status).toBe('pass')
+    } finally {
+      delete process.env['PLAN_TEST_URL']
+    }
+  })
+
+  it('throws with a clear message when env() base URL is not set', async () => {
+    delete process.env['MISSING_ENV_VAR']
+
+    const theSpec = spec('missing-env-plan', {
+      baseUrl: env('MISSING_ENV_VAR'),
+      flows: [
+        flow('main', {
+          steps: [step('ping', api('GET /ping', {}))],
+        }),
+      ],
+    })
+
+    await expect(runPlan(compile(theSpec))).rejects.toThrow('MISSING_ENV_VAR')
+  })
+
+  it('saves and threads values across steps', async () => {
+    const { server: s, url } = await startTestServer({
+      'GET /api/data': { status: 200, body: { value: 'hello' } },
+    })
+    server = s
+
+    const theSpec = spec('ref-plan', {
+      baseUrl: url,
+      flows: [
+        flow('main', {
+          steps: [
+            step('fetch', api('GET /api/data', { save: { val: 'body.value' } })),
+            step('assert', orth_expect(ref('val'), 'equals', 'hello')),
+          ],
+        }),
+      ],
+    })
+
+    const result = await runPlan(compile(theSpec))
+    expect(result.status).toBe('pass')
+    expect(result.passedSteps).toBe(2)
+  })
+
+  it('accepts a plan with inline data catalog', async () => {
+    const { server: s, url } = await startTestServer({
+      'GET /api/echo': { status: 200, body: {} },
+    })
+    server = s
+
+    const theSpec = spec('data-plan', {
+      baseUrl: url,
+      data: { item: { sku: 'sku-001' } },
+      flows: [
+        flow('main', {
+          steps: [step('fetch', api('GET /api/echo', { expect: { status: 200 } }))],
+        }),
+      ],
+    })
+
+    const plan = compile(theSpec)
+    const result = await runPlan(plan)
+    expect(result.status).toBe('pass')
+  })
+
+  it('accepts a plain ExecutionPlan object without going through compile()', async () => {
+    const { server: s, url } = await startTestServer({
+      'GET /api/raw': { status: 200, body: { ok: true } },
+    })
+    server = s
+
+    // Simulate a plan fetched from a remote server as raw JSON
+    const rawPlan: ExecutionPlan = {
+      specName: 'raw-plan',
+      baseUrl: url,
+      apis: {},
+      data: {},
+      steps: [
+        {
+          name: 'check raw',
+          action: { __type: 'api', method: 'GET', path: '/api/raw', options: { expect: { status: 200 } } },
+          retries: 0,
+          saves: {},
+          expects: [],
+          inlineExpect: { status: 200 },
+        },
+      ],
+      flowRanges: [{ name: 'main', startIndex: 0, stepCount: 1 }],
+    }
+
+    const result = await runPlan(rawPlan)
+    expect(result.status).toBe('pass')
+    expect(result.specName).toBe('raw-plan')
   })
 })

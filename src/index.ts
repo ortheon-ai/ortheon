@@ -20,7 +20,8 @@ export {
 } from './dsl.js'
 
 // Runtime
-export { runSpec } from './runner.js'
+export { runSpec, runPlan } from './runner.js'
+export type { RunOptions, RunPlanOptions } from './runner.js'
 export { compile, formatExpandedPlan } from './compiler.js'
 export { validate, validateStructure, validateExpandedPlan } from './validator.js'
 export { RuntimeContext } from './context.js'

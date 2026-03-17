@@ -16,7 +16,7 @@ export const serverApi: Record<string, ApiContract> = {
     },
     response: {
       status: 200,
-      // body: { suites: [{ id, name, path, flowCount, tags, hasError }] }
+      // body: { suites: [{ id, name, path, flowCount, tags, hasError, expectedOutcome }] }
     },
   },
   getSuite: {
@@ -34,60 +34,25 @@ export const serverApi: Record<string, ApiContract> = {
   getSuitePlan: {
     method: 'GET',
     path: '/api/suites/{id}/plan',
-    purpose: 'Get the expanded execution plan for a suite, with validation diagnostics',
+    purpose: 'Get the browse-oriented expanded plan for a suite, with validation diagnostics and rendered text. For UI display.',
     request: {
       params: { id: 'base64url-encoded relative file path' },
     },
     response: {
       status: 200,
-      // body: { specName, baseUrl, steps, validation: { errors, warnings }, renderedPlan }
+      // body: { specName, baseUrl, steps, flowRanges, validation: { errors, warnings }, renderedPlan }
     },
   },
-  startSuiteRun: {
-    method: 'POST',
-    path: '/api/suites/{id}/run',
-    purpose: 'Start an async run for a suite. Always validates first; refuses invalid suites.',
+  getSuiteExecutionPlan: {
+    method: 'GET',
+    path: '/api/suites/{id}/execution-plan',
+    purpose: 'Get the versioned machine-readable execution plan artifact for CLI consumption. env() and secret() markers are unresolved.',
     request: {
       params: { id: 'base64url-encoded relative file path' },
-      // body: { headed?: boolean, baseUrl?: string, timeoutMs?: number } -- all optional
-    },
-    response: {
-      status: 201,
-      // body: { runId: string }
-    },
-  },
-  runAll: {
-    method: 'POST',
-    path: '/api/run-all',
-    purpose: 'Start an async run for every discovered suite. Supports excludeTags to skip suites by tag.',
-    request: {
-      // body: { headed?: boolean, baseUrl?: string, timeoutMs?: number, excludeTags?: string[] } -- all optional
-    },
-    response: {
-      status: 201,
-      // body: { runIds: string[] }
-    },
-  },
-  listRuns: {
-    method: 'GET',
-    path: '/api/runs',
-    purpose: 'List all runs with summary status (last 100 retained in memory)',
-    response: {
-      status: 200,
-      // body: { runs: [{ id, suiteId, suiteName, status, startedAt, durationMs }] }
-    },
-  },
-  getRun: {
-    method: 'GET',
-    path: '/api/runs/{runId}',
-    purpose: 'Get full run detail including per-step results, validation diagnostics, and timing',
-    request: {
-      params: { runId: 'UUID assigned when the run was created' },
     },
     response: {
       status: 200,
-      // body: { id, suiteId, suiteName, status, startedAt, finishedAt, durationMs,
-      //         error, validation, flows, totalSteps, passedSteps, failedSteps }
+      // body: { planVersion: 1, plan: ExecutionPlan, validation: { errors, warnings }, expectedOutcome, tags, safety }
     },
   },
   listContracts: {

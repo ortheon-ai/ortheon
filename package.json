@@ -24,6 +24,7 @@
     "examples": "tsx scripts/run-examples.ts",
     "serve": "tsx src/cli.ts serve 'examples/specs/**/*.ortheon.ts'",
     "server-tests": "tsx scripts/run-server-tests.ts",
+    "cli-remote-tests": "tsx scripts/run-cli-remote-tests.ts",
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
     "prepublishOnly": "npm test && npm run build"

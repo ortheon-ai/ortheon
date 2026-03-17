@@ -1,18 +1,15 @@
 // Ortheon Server SPA
-// Vanilla JS, History API routing, five views: dashboard / runs / suite-detail / run-view / contract-detail
+// Vanilla JS, History API routing, four views: dashboard / suite-detail / contract-detail / contract-list
 //
 // Sections:
 //  1. Router
 //  2. API helpers
-//  3. State helpers
-//  4. Render primitives
-//  5. Grouping utilities
-//  6. Dashboard – Suites view
-//  7. Dashboard – Runs list view
-//  8. Dashboard – Contracts list view
-//  9. Suite detail view
-// 10. Contract detail view
-// 11. Run view
+//  3. Render primitives
+//  4. Grouping utilities
+//  5. Dashboard – Suites view
+//  6. Dashboard – Contracts list view
+//  7. Suite detail view
+//  8. Contract detail view
 
 // ---------------------------------------------------------------------------
 // 1. Router
@@ -45,99 +42,8 @@ async function apiFetch(path) {
   return res.json()
 }
 
-async function apiPost(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}))
-    throw new Error(data.error || `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
 // ---------------------------------------------------------------------------
-// 3. State helpers
-// ---------------------------------------------------------------------------
-
-// Per-run collapsed flow state: Map<runId, Set<flowName>>
-const collapsedFlowsState = new Map()
-
-function getCollapsedFlows(runId) {
-  if (!collapsedFlowsState.has(runId)) collapsedFlowsState.set(runId, new Set())
-  return collapsedFlowsState.get(runId)
-}
-
-function toggleFlowCollapse(runId, flowName) {
-  const set = getCollapsedFlows(runId)
-  if (set.has(flowName)) set.delete(flowName)
-  else set.add(flowName)
-}
-
-function isFlowCollapsed(runId, flowName) {
-  return getCollapsedFlows(runId).has(flowName)
-}
-
-// Per-run expanded step state: Map<runId, Set<stepKey>>
-const expandedStepsState = new Map()
-
-function getExpandedSteps(runId) {
-  if (!expandedStepsState.has(runId)) expandedStepsState.set(runId, new Set())
-  return expandedStepsState.get(runId)
-}
-
-function toggleStepExpand(runId, stepKey) {
-  const set = getExpandedSteps(runId)
-  if (set.has(stepKey)) set.delete(stepKey)
-  else set.add(stepKey)
-}
-
-function isStepExpanded(runId, stepKey) {
-  return getExpandedSteps(runId).has(stepKey)
-}
-
-// Compute smart collapse defaults for a completed run
-function applySmartCollapseDefaults(run) {
-  if (run.status === 'pending' || run.status === 'running') return
-
-  const collapsed = getCollapsedFlows(run.id)
-  if (collapsed.size > 0) return // user has already interacted, respect their state
-
-  const flows = run.flows ?? []
-  const anyFailed = flows.some(f => f.failed > 0)
-
-  if (anyFailed) {
-    // Collapse fully-passing flows, expand failed ones
-    for (const f of flows) {
-      if (f.failed === 0) collapsed.add(f.name)
-    }
-  } else {
-    // All passed: collapse all but the first
-    for (let i = 1; i < flows.length; i++) {
-      collapsed.add(flows[i].name)
-    }
-  }
-}
-
-// Auto-expand failed steps for a run
-function applyAutoExpandFailures(run) {
-  const expanded = getExpandedSteps(run.id)
-  if (expanded.size > 0) return // already initialized
-
-  const flows = run.flows ?? []
-  let idx = 0
-  for (const f of flows) {
-    for (const s of f.steps) {
-      if (s.status === 'fail') expanded.add(`${run.id}:${idx}`)
-      idx++
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 4. Render primitives
+// 3. Render primitives
 // ---------------------------------------------------------------------------
 
 const root = document.getElementById('root')
@@ -146,55 +52,12 @@ const breadcrumb = document.getElementById('breadcrumb')
 function setRoot(html) { root.innerHTML = html }
 function setBreadcrumb(html) { breadcrumb.innerHTML = html }
 
-function statusBadge(status) {
-  const labels = { pending: '◌ pending', running: '● running', pass: '✔ pass', fail: '✘ fail', error: '✘ error' }
-  return `<span class="status-badge status-${status}" data-testid="run-status" data-status="${status}">${labels[status] ?? status}</span>`
-}
-
-// Returns a badge that visually reflects whether the run met its expected outcome.
-// meetsExpected is null while the run is still in progress (pending/running).
-function outcomeBadge(status, meetsExpected, expectedOutcome) {
-  if (meetsExpected === null || meetsExpected === undefined) {
-    return statusBadge(status)
-  }
-  if (meetsExpected) {
-    if (expectedOutcome === 'pass') {
-      return statusBadge(status)
-    }
-    return `<span class="status-badge status-pass" data-testid="run-status" data-status="${escapeHtml(status)}">✔ ${escapeHtml(status)} · expected</span>`
-  }
-  if (expectedOutcome !== 'pass') {
-    return `<span class="status-badge status-fail" data-testid="run-status" data-status="${escapeHtml(status)}">✘ ${escapeHtml(status)} · unexpected</span>`
-  }
-  return statusBadge(status)
-}
-
-function durationLabel(ms) {
-  if (ms === null || ms === undefined) return ''
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(2)}s`
-}
-
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-}
-
-function timeAgo(iso) {
-  if (!iso) return ''
-  const diffMs = Date.now() - new Date(iso).getTime()
-  const diffSec = Math.floor(diffMs / 1000)
-  if (diffSec < 60) return 'just now'
-  const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}m ago`
-  const diffHr = Math.floor(diffMin / 60)
-  if (diffHr < 24) return `${diffHr}h ago`
-  const diffDay = Math.floor(diffHr / 24)
-  if (diffDay === 1) return 'yesterday'
-  return `${diffDay}d ago`
 }
 
 function methodBadge(method) {
@@ -205,7 +68,6 @@ function renderTabBar(activeTab) {
   return `
     <div class="tab-bar">
       <a class="tab${activeTab === 'suites' ? ' active' : ''}" href="/" data-link data-testid="suites-tab">Suites</a>
-      <a class="tab${activeTab === 'runs' ? ' active' : ''}" href="/runs" data-link data-testid="runs-tab">Runs</a>
       <a class="tab${activeTab === 'contracts' ? ' active' : ''}" href="/contracts" data-link data-testid="contracts-tab">Contracts</a>
     </div>`
 }
@@ -235,7 +97,7 @@ function renderJsonValue(val, depth = 0) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Grouping utilities
+// 4. Grouping utilities
 // ---------------------------------------------------------------------------
 
 // Group consecutive steps by section, preserving order.
@@ -255,7 +117,7 @@ function groupStepsBySection(steps) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Dashboard – Suites view
+// 5. Dashboard – Suites view
 // ---------------------------------------------------------------------------
 
 // Cache full suite list for tag chip collection (not re-derived from filtered results)
@@ -296,26 +158,11 @@ function renderSuiteGrid(suites, searchVal) {
         const errorBadge = s.hasError ? '<span class="badge badge-error">load error</span>' : ''
         const flowBadge = `<span class="badge badge-flow">${s.flowCount} flow${s.flowCount !== 1 ? 's' : ''}</span>`
 
-        let lastRunHtml = ''
-        if (s.lastRun) {
-          const ago = timeAgo(s.lastRun.startedAt)
-          const exact = new Date(s.lastRun.startedAt).toLocaleString()
-          const dur = s.lastRun.durationMs !== null ? ` · ${durationLabel(s.lastRun.durationMs)}` : ''
-          const expectedOutcome = s.lastRun.expectedOutcome ?? s.expectedOutcome ?? 'pass'
-          const meetsExpected = s.lastRun.meetsExpectedOutcome
-          lastRunHtml = `
-            <div class="suite-card-last-run" data-testid="suite-last-run">
-              ${outcomeBadge(s.lastRun.status, meetsExpected, expectedOutcome)}
-              <span class="last-run-time" title="${escapeHtml(exact)}">${escapeHtml(ago)}${escapeHtml(dur)}</span>
-            </div>`
-        }
-
         return `
           <a class="suite-card" href="/suites/${encodeURIComponent(s.id)}" data-link data-testid="suite-card" data-suite-id="${escapeHtml(s.id)}">
             <div class="suite-card-name">${escapeHtml(s.name)}</div>
             <div class="suite-card-path">${escapeHtml(s.path)}</div>
             <div class="suite-card-meta">${flowBadge}${tags}${errorBadge}</div>
-            ${lastRunHtml}
           </a>`
       }).join('\n')
 
@@ -333,7 +180,6 @@ function renderSuiteGrid(suites, searchVal) {
               data-testid="search-input"
               autocomplete="off"
             />
-            <button class="btn btn-primary" id="run-all-btn" data-testid="run-all-button">▶ Run All</button>
           </div>
           ${tagChips}
         </div>
@@ -367,12 +213,6 @@ function renderSuiteGrid(suites, searchVal) {
       fetchFilteredSuites(searchVal2, _activeTag)
     })
   })
-
-  // Wire up Run All
-  const runAllBtn = root.querySelector('#run-all-btn')
-  if (runAllBtn) {
-    runAllBtn.addEventListener('click', () => startRunAll())
-  }
 }
 
 async function fetchFilteredSuites(name, tag) {
@@ -390,66 +230,7 @@ async function fetchFilteredSuites(name, tag) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Dashboard – Runs list view
-// ---------------------------------------------------------------------------
-
-async function renderRunsList() {
-  setBreadcrumb('')
-  setRoot('<div class="loading-state"><span class="spinner">◌</span> Loading runs&hellip;</div>')
-
-  let data
-  try {
-    data = await apiFetch('/api/runs')
-  } catch (err) {
-    setRoot(`<div class="error-state">Failed to load runs: ${escapeHtml(err.message)}</div>`)
-    return
-  }
-
-  const runs = [...data.runs].reverse()
-
-  const rows = runs.length === 0
-    ? '<div class="empty-state">No runs yet. Open a suite and click Run.</div>'
-    : runs.map(r => {
-        const ago = timeAgo(r.startedAt)
-        const exact = new Date(r.startedAt).toLocaleString()
-        const dur = r.durationMs !== null ? durationLabel(r.durationMs) : ''
-        const expectedOutcome = r.expectedOutcome ?? 'pass'
-        return `
-          <a class="run-row" href="/runs/${encodeURIComponent(r.id)}" data-link>
-            <div class="run-row-suite">${escapeHtml(r.suiteName)}</div>
-            <div class="run-row-meta">
-              ${outcomeBadge(r.status, r.meetsExpectedOutcome, expectedOutcome)}
-              <span class="run-row-time" title="${escapeHtml(exact)}">${escapeHtml(ago)}</span>
-              ${dur ? `<span class="run-row-dur">${escapeHtml(dur)}</span>` : ''}
-            </div>
-          </a>`
-      }).join('\n')
-
-  setRoot(`
-    <div>
-      ${renderTabBar('runs')}
-      <div class="tab-content-header">
-        <div class="filter-bar">
-          <div class="filter-bar-row">
-            <div class="section-subtitle">${runs.length} run${runs.length !== 1 ? 's' : ''} (most recent first)</div>
-            <button class="btn btn-secondary" id="refresh-runs-btn" data-testid="refresh-runs-button">↻ Refresh</button>
-          </div>
-        </div>
-      </div>
-      <div class="runs-list" data-testid="runs-list">
-        ${rows}
-      </div>
-    </div>
-  `)
-
-  const refreshBtn = root.querySelector('#refresh-runs-btn')
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', () => renderRunsList())
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 8. Dashboard – Contracts list view
+// 6. Dashboard – Contracts list view
 // ---------------------------------------------------------------------------
 
 async function renderContractsList() {
@@ -497,7 +278,7 @@ async function renderContractsList() {
 }
 
 // ---------------------------------------------------------------------------
-// 9. Suite detail view
+// 7. Suite detail view
 // ---------------------------------------------------------------------------
 
 async function renderSuiteDetail(id) {
@@ -516,6 +297,11 @@ async function renderSuiteDetail(id) {
   }
 
   document.getElementById('suite-name-crumb').textContent = suite.name
+
+  // CLI command and plan artifact info
+  const serverOrigin = window.location.origin
+  const executionPlanUrl = `${serverOrigin}/api/suites/${encodeURIComponent(id)}/execution-plan`
+  const cliCommand = `ortheon run --from ${serverOrigin} --suite ${id}`
 
   function flowAnchorId(name) {
     return 'flow-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -608,9 +394,6 @@ async function renderSuiteDetail(id) {
             ${safetyLabel}
           </div>
         </div>
-        <button class="btn btn-primary" id="run-btn" data-testid="run-button" data-suite-id="${escapeHtml(id)}">
-          ▶ Run
-        </button>
       </div>
 
       ${validationHtml}
@@ -630,6 +413,18 @@ async function renderSuiteDetail(id) {
         </div>
       </div>
 
+      <div class="info-card" style="margin-bottom: 24px;" data-testid="cli-launcher">
+        <div class="info-card-label">Run via CLI</div>
+        <div class="cli-command-block" data-testid="cli-command">
+          <code>${escapeHtml(cliCommand)}</code>
+          <button class="btn btn-secondary btn-sm copy-btn" data-copy="${escapeHtml(cliCommand)}" title="Copy to clipboard">Copy</button>
+        </div>
+        <div class="cli-links" style="margin-top: 8px; display: flex; gap: 12px; align-items: center;">
+          <span style="font-size: 12px; color: var(--muted);">Suite ID: <code style="font-family: var(--mono)">${escapeHtml(id)}</code></span>
+          <a href="${escapeHtml(executionPlanUrl)}" target="_blank" class="btn btn-secondary btn-sm" data-testid="download-plan-link">Download plan JSON</a>
+        </div>
+      </div>
+
       <div class="plan-section">
         <div class="plan-header">
           <span>Expanded Plan</span>
@@ -642,7 +437,17 @@ async function renderSuiteDetail(id) {
     </div>
   `)
 
-  document.getElementById('run-btn')?.addEventListener('click', () => startRun(id))
+  // Wire up copy buttons
+  root.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const text = btn.getAttribute('data-copy')
+      navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent
+        btn.textContent = 'Copied!'
+        setTimeout(() => { btn.textContent = orig }, 1500)
+      }).catch(() => {})
+    })
+  })
 
   root.querySelectorAll('[data-scroll-to]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -689,42 +494,8 @@ function renderValidationBlock(validation) {
     </div>`
 }
 
-async function startRun(suiteId) {
-  const btn = document.getElementById('run-btn')
-  if (btn) btn.disabled = true
-
-  try {
-    const { runId } = await apiPost(`/api/suites/${encodeURIComponent(suiteId)}/run`, {})
-    navigate(`/runs/${runId}`)
-  } catch (err) {
-    if (btn) {
-      btn.disabled = false
-      btn.textContent = `Error: ${err.message}`
-    }
-  }
-}
-
-async function startRunAll() {
-  const btn = document.getElementById('run-all-btn')
-  if (btn) {
-    btn.disabled = true
-    btn.textContent = '▶ Starting…'
-  }
-
-  try {
-    await apiPost('/api/run-all', {})
-    navigate('/runs')
-  } catch (err) {
-    if (btn) {
-      btn.disabled = false
-      btn.textContent = `Error: ${err.message}`
-      setTimeout(() => { btn.textContent = '▶ Run All' }, 3000)
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
-// 10. Contract detail view
+// 8. Contract detail view
 // ---------------------------------------------------------------------------
 
 async function renderContractDetail(name) {
@@ -834,268 +605,10 @@ async function renderContractDetail(name) {
 }
 
 // ---------------------------------------------------------------------------
-// 11. Run view
-// ---------------------------------------------------------------------------
-
-let pollTimer = null
-
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-async function renderRunView(id) {
-  stopPolling()
-  setBreadcrumb(`<span class="crumb"><a href="/" data-link>Suites</a></span><span class="crumb-sep"> / </span><span class="crumb-current">Run</span>`)
-  setRoot('<div class="loading-state"><span class="spinner">◌</span> Loading run&hellip;</div>')
-
-  let run
-  try {
-    run = await apiFetch(`/api/runs/${id}`)
-  } catch (err) {
-    setRoot(`<div class="error-state">${escapeHtml(err.message)}</div>`)
-    return
-  }
-
-  applySmartCollapseDefaults(run)
-  applyAutoExpandFailures(run)
-  renderRun(run)
-
-  if (run.status === 'pending' || run.status === 'running') {
-    pollTimer = setInterval(async () => {
-      try {
-        const updated = await apiFetch(`/api/runs/${id}`)
-        applySmartCollapseDefaults(updated)
-        applyAutoExpandFailures(updated)
-        renderRun(updated)
-        if (updated.status !== 'pending' && updated.status !== 'running') {
-          stopPolling()
-        }
-      } catch {
-        stopPolling()
-      }
-    }, 2000)
-  }
-}
-
-function renderRun(run) {
-  // Update breadcrumb with suite link once we have the data
-  const shortId = run.id.slice(0, 8)
-  setBreadcrumb(`
-    <span class="crumb"><a href="/" data-link>Suites</a></span>
-    <span class="crumb-sep"> / </span>
-    <span class="crumb"><a href="/suites/${encodeURIComponent(run.suiteId)}" data-link>${escapeHtml(run.suiteName)}</a></span>
-    <span class="crumb-sep"> / </span>
-    <span class="crumb-current">Run ${escapeHtml(shortId)}</span>
-  `)
-
-  const isTerminal = run.status !== 'pending' && run.status !== 'running'
-  const startExact = new Date(run.startedAt).toLocaleString()
-  const expectedOutcome = run.expectedOutcome ?? 'pass'
-  const meetsExpected = run.meetsExpectedOutcome
-
-  const progressHtml = run.totalSteps !== null ? `
-    <div class="run-progress">
-      <span class="prog-pass">✔ ${run.passedSteps}</span>
-      <span class="prog-fail">✘ ${run.failedSteps}</span>
-      <span>/ ${run.totalSteps} steps</span>
-      ${run.durationMs !== null ? `<span>${durationLabel(run.durationMs)}</span>` : ''}
-    </div>` : ''
-
-  const errorHtml = run.error
-    ? `<div class="run-error-block">Error: ${escapeHtml(run.error)}</div>`
-    : ''
-
-  const validationHtml = run.validation && (run.validation.errors.length > 0)
-    ? `<div class="run-validation-block">
-        <div class="run-validation-title">Validation errors</div>
-        ${run.validation.errors.map(e => `<div class="run-validation-item">✘ ${escapeHtml(e)}</div>`).join('')}
-      </div>`
-    : ''
-
-  const rerunBtn = isTerminal
-    ? `<button class="btn btn-secondary" id="rerun-btn" data-testid="rerun-button" data-suite-id="${escapeHtml(run.suiteId)}">↺ Re-run</button>`
-    : ''
-
-  // Build flows HTML
-  let flowsHtml = ''
-  if (run.flows && run.flows.length > 0) {
-    let globalStepIdx = 0
-    flowsHtml = run.flows.map(f => {
-      const collapsed = isFlowCollapsed(run.id, f.name)
-      const flowDurMs = f.steps.reduce((acc, s) => acc + (s.durationMs ?? 0), 0)
-      const flowDur = flowDurMs > 0 ? durationLabel(flowDurMs) : ''
-      const flowStatus = f.failed > 0 ? 'fail' : (f.skipped === f.steps.length ? 'skip' : 'pass')
-
-      const countBadges = `
-        <span class="flow-count flow-count-pass">✔ ${f.passed}</span>
-        <span class="flow-count flow-count-fail">✘ ${f.failed}</span>
-        ${f.skipped > 0 ? `<span class="flow-count flow-count-skip">○ ${f.skipped}</span>` : ''}
-      `
-
-      const sectionGroups = groupStepsBySection(f.steps)
-
-      const stepsHtml = sectionGroups.map(group => {
-        const sectionHeader = group.section
-          ? `<div class="run-section-header" data-testid="section-header">${escapeHtml(group.section)}</div>`
-          : ''
-
-        const stepRows = group.steps.map(s => {
-          const stepKey = `${run.id}:${globalStepIdx}`
-          globalStepIdx++
-          return renderStepRow(run.id, stepKey, s)
-        }).join('\n')
-
-        return sectionHeader + stepRows
-      }).join('\n')
-
-      return `
-        <div class="flow-block" data-flow="${escapeHtml(f.name)}">
-          <div class="flow-header flow-header-${flowStatus}" data-testid="flow-header" data-flow="${escapeHtml(f.name)}" data-run="${escapeHtml(run.id)}">
-            <span class="flow-toggle">${collapsed ? '▶' : '▼'}</span>
-            <span class="flow-name">${escapeHtml(f.name)}</span>
-            <span class="flow-counts">${countBadges}</span>
-            ${flowDur ? `<span class="flow-dur">${escapeHtml(flowDur)}</span>` : ''}
-          </div>
-          <div class="flow-steps${collapsed ? ' is-collapsed' : ''}">
-            ${stepsHtml}
-          </div>
-        </div>`
-    }).join('\n')
-  } else if (run.status === 'pending' || run.status === 'running') {
-    flowsHtml = '<div class="loading-state"><span class="spinner">◌</span> Waiting for steps&hellip;</div>'
-  }
-
-  root.innerHTML = `
-    <div class="run-view">
-      <div class="run-header">
-        <div>
-          <div class="run-title">Run: <a href="/suites/${encodeURIComponent(run.suiteId)}" data-link>${escapeHtml(run.suiteName)}</a></div>
-          <div class="run-meta">
-            ${outcomeBadge(run.status, meetsExpected, expectedOutcome)}
-            <span title="${escapeHtml(startExact)}">${escapeHtml(timeAgo(run.startedAt))}</span>
-          </div>
-        </div>
-        ${rerunBtn}
-      </div>
-
-      ${progressHtml}
-      ${errorHtml}
-      ${validationHtml}
-
-      <div class="flows-list">
-        ${flowsHtml}
-      </div>
-    </div>
-  `
-
-  // Wire up flow collapse toggles
-  root.querySelectorAll('[data-testid="flow-header"]').forEach(header => {
-    header.addEventListener('click', () => {
-      const flowName = header.getAttribute('data-flow')
-      const runId = header.getAttribute('data-run')
-      toggleFlowCollapse(runId, flowName)
-      const block = header.closest('.flow-block')
-      const stepsEl = block?.querySelector('.flow-steps')
-      const toggle = header.querySelector('.flow-toggle')
-      if (stepsEl) stepsEl.classList.toggle('is-collapsed')
-      if (toggle) toggle.textContent = stepsEl?.classList.contains('is-collapsed') ? '▶' : '▼'
-    })
-  })
-
-  // Wire up step detail toggles
-  root.querySelectorAll('[data-testid="step-detail-toggle"]').forEach(toggle => {
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation()
-      const stepKey = toggle.getAttribute('data-step-key')
-      const runId = toggle.getAttribute('data-run')
-      toggleStepExpand(runId, stepKey)
-      const stepEl = toggle.closest('.run-step')
-      const panel = stepEl?.querySelector('[data-testid="step-detail-panel"]')
-      if (panel) panel.classList.toggle('is-hidden')
-      toggle.textContent = panel?.classList.contains('is-hidden') ? '…' : '×'
-    })
-  })
-
-  // Wire up re-run button
-  const rerunBtnActual = document.getElementById('rerun-btn')
-  if (rerunBtnActual) {
-    rerunBtnActual.addEventListener('click', async () => {
-      rerunBtnActual.disabled = true
-      rerunBtnActual.textContent = '↺ Starting…'
-      try {
-        const suiteId = rerunBtnActual.getAttribute('data-suite-id')
-        const { runId } = await apiPost(`/api/suites/${encodeURIComponent(suiteId)}/run`, {})
-        navigate(`/runs/${runId}`)
-      } catch (err) {
-        rerunBtnActual.disabled = false
-        rerunBtnActual.textContent = `↺ Re-run`
-      }
-    })
-  }
-}
-
-function renderStepRow(runId, stepKey, s) {
-  const statusIcon = {
-    pass:  '<span class="step-icon step-icon-pass">✔</span>',
-    fail:  '<span class="step-icon step-icon-fail">✘</span>',
-    skip:  '<span class="step-icon step-icon-skip">○</span>',
-  }[s.status] || '<span class="step-icon step-icon-pending">◌</span>'
-
-  const dur = s.durationMs !== null && s.durationMs !== undefined ? durationLabel(s.durationMs) : ''
-  const expanded = isStepExpanded(runId, stepKey)
-
-  // Build detail panel content
-  const hasDetail = s.actionSummary || (s.saves && s.saves.length > 0) || (s.expects && s.expects.length > 0) || s.error
-  let detailHtml = ''
-  if (hasDetail) {
-    const actionLine = s.actionSummary
-      ? `<div class="step-detail-row"><span class="step-detail-label">${escapeHtml(s.actionType ?? 'action')}</span><span class="step-detail-val mono">${escapeHtml(s.actionSummary)}</span></div>`
-      : ''
-    const savesLine = s.saves && s.saves.length > 0
-      ? `<div class="step-detail-row"><span class="step-detail-label">saves</span><span class="step-detail-val mono">${s.saves.map(v => escapeHtml(v)).join(', ')}</span></div>`
-      : ''
-    const expectsLine = s.expects && s.expects.length > 0
-      ? `<div class="step-detail-row"><span class="step-detail-label">expects</span><span class="step-detail-val">${s.expects.map(v => `<span class="mono">${escapeHtml(v)}</span>`).join('<br>')}</span></div>`
-      : ''
-    const errorLine = s.error
-      ? `<div class="run-step-error">${escapeHtml(s.error)}</div>`
-      : ''
-
-    detailHtml = `
-      <div class="step-detail-panel${expanded ? '' : ' is-hidden'}" data-testid="step-detail-panel">
-        ${actionLine}${savesLine}${expectsLine}${errorLine}
-      </div>`
-  }
-
-  const toggleBtn = hasDetail
-    ? `<button class="step-detail-toggle" data-testid="step-detail-toggle" data-step-key="${escapeHtml(stepKey)}" data-run="${escapeHtml(runId)}" title="Toggle detail">${expanded ? '×' : '…'}</button>`
-    : ''
-
-  return `
-    <div class="run-step is-${s.status}" data-testid="step-result" data-status="${escapeHtml(s.status || '')}">
-      <div class="run-step-main">
-        ${statusIcon}
-        <div class="run-step-body">
-          <div class="run-step-name">${escapeHtml(s.name)}</div>
-        </div>
-        <div class="run-step-right">
-          <div class="run-step-dur">${escapeHtml(dur)}</div>
-          ${toggleBtn}
-        </div>
-      </div>
-      ${detailHtml}
-    </div>`
-}
-
-// ---------------------------------------------------------------------------
 // Router entry point
 // ---------------------------------------------------------------------------
 
 function render(path) {
-  stopPolling()
   if (_searchDebounceTimer !== null) {
     clearTimeout(_searchDebounceTimer)
     _searchDebounceTimer = null
@@ -1104,26 +617,19 @@ function render(path) {
   _activeTag = null
 
   const suiteMatch    = path.match(/^\/suites\/([^/]+)\/?$/)
-  const runMatch      = path.match(/^\/runs\/([^/]+)\/?$/)
   const contractMatch = path.match(/^\/contracts\/([^/]+)\/?$/)
 
   if (suiteMatch) {
     const id = decodeURIComponent(suiteMatch[1])
     renderSuiteDetail(id)
-  } else if (runMatch) {
-    const id = decodeURIComponent(runMatch[1])
-    renderRunView(id)
   } else if (contractMatch) {
     const name = decodeURIComponent(contractMatch[1])
     renderContractDetail(name)
   } else if (path === '/contracts') {
     renderContractsList()
-  } else if (path === '/runs') {
-    renderRunsList()
   } else {
     renderDashboard()
   }
 }
 
-// Boot
 render(location.pathname)
