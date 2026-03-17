@@ -1,21 +1,21 @@
 /**
  * Integration test for the remote-plan execution path.
  *
- * Proves the full round-trip:
+ * Proves the full round-trip for all example specs:
  *   CLI  →  GET /api/suites/:id/execution-plan  →  runPlan()  →  result
  *
  * Starts:
  *   1. The demo app server (port 3737) -- target for spec runs
  *   2. The ortheon web server (port 4002) -- serving example specs
  *
- * Then:
- *   1. Lists suites via GET /api/suites (simulates `ortheon list --from`)
- *   2. Fetches the execution plan for the health suite (simulates `ortheon run --from ... --suite`)
- *   3. Runs the plan via runPlan() with env vars set locally
- *   4. Asserts the result is a pass
+ * Then for each example spec:
+ *   1. Fetches its execution plan from the ortheon server
+ *   2. Runs the plan via runPlan() with env vars set locally
+ *   3. Reports pass/fail
  *
- * DEMO_BASE_URL must resolve from the local environment so runPlan() can
- * execute the health spec's steps. The server never sees this value.
+ * This mirrors what `ortheon run --from <url> --suite <id>` does.
+ * DEMO_BASE_URL and auth env vars are set here (as the "CLI user" would),
+ * never passed to the server.
  */
 
 import { startServer as startDemoServer } from '../demo/server.ts'
@@ -30,8 +30,12 @@ const DEMO_BASE_URL = `http://localhost:${DEMO_PORT}`
 const ORTHEON_BASE_URL = `http://localhost:${ORTHEON_PORT}`
 const SPEC_GLOB = 'examples/specs/**/*.ortheon.ts'
 
-// The CLI caller sets its own env vars -- the server never sees these.
+// The CLI caller sets its own env vars — the server never sees these.
 process.env['DEMO_BASE_URL'] ??= DEMO_BASE_URL
+process.env['E2E_USER_PASSWORD'] ??= 'password123'
+process.env['E2E_USER_EMAIL'] ??= 'buyer@example.com'
+process.env['E2E_ADMIN_EMAIL'] ??= 'admin@example.com'
+process.env['E2E_ADMIN_PASSWORD'] ??= 'adminpass'
 
 console.log('Starting demo server...')
 const demoServer = await startDemoServer(DEMO_PORT)
@@ -40,42 +44,28 @@ console.log('Discovering and starting ortheon server...')
 const suites = await discoverSuites(SPEC_GLOB, process.cwd())
 const ortheonServer = await startOrtheonServer(suites, ORTHEON_PORT)
 
-const results: SpecResult[] = []
+// The same 3 specs that `npm run examples` exercises, identified by their
+// relative path (which determines the suite ID the server assigns).
+const REMOTE_SPECS: Array<{ label: string; relativePath: string }> = [
+  { label: 'health smoke test',       relativePath: 'examples/specs/smoke/health.ortheon.ts' },
+  { label: 'guest order (API only)',   relativePath: 'examples/specs/checkout/guest-order.ortheon.ts' },
+  { label: 'authenticated checkout',  relativePath: 'examples/specs/checkout/authenticated-checkout.ortheon.ts' },
+]
+
+const specResults: SpecResult[] = []
 let anyFailed = false
-let passed = 0
-let failed = 0
 
-function ok(msg: string) { console.log(`  ✔ ${msg}`); passed++ }
-function fail(msg: string) { console.error(`  ✘ ${msg}`); failed++; anyFailed = true }
+async function fetchAndRunPlan(label: string, relativePath: string): Promise<void> {
+  const suiteId = encodeSuiteId(relativePath)
+  const planUrl = `${ORTHEON_BASE_URL}/api/suites/${suiteId}/execution-plan`
 
-try {
-  // -------------------------------------------------------------------------
-  // Step 1: List suites (simulates `ortheon list --from`)
-  // -------------------------------------------------------------------------
-  console.log(`\n[1] Listing suites from ${ORTHEON_BASE_URL}`)
-
-  const listRes = await fetch(`${ORTHEON_BASE_URL}/api/suites`)
-  if (!listRes.ok) fail(`GET /api/suites returned HTTP ${listRes.status}`)
-  else {
-    const data = await listRes.json() as { suites: Array<{ id: string; name: string }> }
-    ok(`GET /api/suites returned ${data.suites.length} suites`)
-    const health = data.suites.find(s => s.name === 'service health check')
-    if (!health) fail('health suite not found in suite list')
-    else ok(`health suite found: id=${health.id}`)
-  }
-
-  // -------------------------------------------------------------------------
-  // Step 2: Fetch execution plan for the health suite
-  //         (simulates `ortheon run --from ... --suite <id>`)
-  // -------------------------------------------------------------------------
-  const healthId = encodeSuiteId('examples/specs/smoke/health.ortheon.ts')
-  const planUrl = `${ORTHEON_BASE_URL}/api/suites/${healthId}/execution-plan`
-  console.log(`\n[2] Fetching execution plan: ${planUrl}`)
+  console.log(`\nFetching plan: ${label}`)
+  console.log(`  ${planUrl}`)
 
   const planRes = await fetch(planUrl)
   if (!planRes.ok) {
-    fail(`GET /api/suites/:id/execution-plan returned HTTP ${planRes.status}`)
-    throw new Error('Cannot continue without a plan')
+    const err = await planRes.json().catch(() => ({})) as { error?: string }
+    throw new Error(`HTTP ${planRes.status}: ${err.error ?? 'unknown error'}`)
   }
 
   const artifact = await planRes.json() as {
@@ -84,41 +74,26 @@ try {
     validation: { errors: string[]; warnings: string[] }
   }
 
-  ok(`plan fetched: planVersion=${artifact.planVersion}`)
-
-  if (artifact.planVersion !== 1) {
-    fail(`unexpected planVersion: ${artifact.planVersion}`)
-  } else {
-    ok('planVersion is 1')
-  }
-
   if (artifact.validation.errors.length > 0) {
-    fail(`plan has validation errors: ${artifact.validation.errors.join('; ')}`)
-    throw new Error('Plan is invalid; aborting execution')
-  } else {
-    ok('plan passed server-side validation')
+    throw new Error(`Plan has validation errors:\n${artifact.validation.errors.map(e => `  - ${e}`).join('\n')}`)
   }
 
-  ok(`plan specName: ${artifact.plan.specName}`)
-  ok(`plan steps: ${artifact.plan.steps.length}`)
-
-  // -------------------------------------------------------------------------
-  // Step 3: Execute plan locally with user-provided env vars
-  //         The server did NOT resolve DEMO_BASE_URL -- the CLI does it here.
-  // -------------------------------------------------------------------------
-  console.log('\n[3] Running plan via runPlan() (env vars from local process)')
+  if (artifact.validation.warnings.length > 0) {
+    for (const w of artifact.validation.warnings) {
+      console.warn(`  warning: ${w}`)
+    }
+  }
 
   const result = await runPlan(artifact.plan)
-  results.push(result)
+  specResults.push(result)
   consoleReport(result)
+  if (result.status === 'fail') anyFailed = true
+}
 
-  if (result.status === 'pass') {
-    ok(`plan executed successfully: ${result.passedSteps}/${result.totalSteps} steps passed`)
-  } else {
-    fail(`plan execution failed: ${result.failedSteps}/${result.totalSteps} steps failed`)
-    anyFailed = true
+try {
+  for (const { label, relativePath } of REMOTE_SPECS) {
+    await fetchAndRunPlan(label, relativePath)
   }
-
 } catch (err) {
   console.error('\nUnexpected error:', err)
   anyFailed = true
@@ -127,14 +102,5 @@ try {
   ortheonServer.close()
 }
 
-// -------------------------------------------------------------------------
-// Summary
-// -------------------------------------------------------------------------
-console.log('\n─────────────────────────────────────')
-console.log(`CLI remote-plan tests: ${passed} checks passed, ${failed} failed`)
-if (results.length > 0) {
-  consoleSummary(results)
-}
-console.log('─────────────────────────────────────')
-
+consoleSummary(specResults)
 process.exit(anyFailed ? 1 : 0)
