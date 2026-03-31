@@ -1,8 +1,57 @@
 # Ortheon
 
-Declarative behavioral specs for real infrastructure. Every step is either a browser interaction or an API call.
+Declarative behavioral contracts for real infrastructure.
 
-## What Ortheon does
+## What Ortheon _is_
+
+Ortheon is a **constrained behavioral specification system** whose primary artifact is a canonical spec, not arbitrary test code.
+
+- Specs are authored in TypeScript but behave like data: explicit, constrained, and statically understandable
+- The DSL is intentionally **non-programmable**
+- **Specs are the canonical source of truth**
+- Every spec can be **fully expanded into a fully inlined operational representation**
+- **Expanded plans are the normalized operational view** used for execution, debugging, and analysis
+- The same spec can be used to test real systems, debug failures, compare intended vs actual behavior, and constrain large-scale rewrites, including LLM-driven ones
+
+**Design goal:** a spec should describe _what must be true about the system_, not _how the system is implemented_.
+
+## What Ortheon is not
+
+Ortheon is not:
+
+- a general-purpose test framework
+- a programmable test runner
+- a DSL for arbitrary setup or fixture logic
+- a direct database, log, or event inspection tool
+- a replacement for unit, integration, or contract tests
+
+It is a constrained system for expressing and executing **behavioral contracts over real infrastructure**.
+
+## Constraints (non-negotiable)
+
+Ortheon specs are intentionally limited. Ortheon uses a tiny grammar, stable names, and explicit dependencies because those properties make specs easy to validate, execute, diff, and repair — for both humans and LLMs.
+
+- **No arbitrary code** inside specs — no conditionals, loops, or dynamic construction
+- **No custom execution primitives** — only `browser(...)`, `api(...)`, and `expect(...)`
+- **No hidden state** — all data must be explicitly saved and referenced
+- **No direct infrastructure access** — DB/log/event checks must go through HTTP verification endpoints
+- **Specs must be statically understandable** — a spec can be fully expanded without executing it
+
+A spec must be statically understandable by inspection. If understanding a spec requires executing arbitrary user code, the spec is invalid by design. When a behavior cannot be expressed within these constraints, the correct fix is usually to expose a better system surface or verification endpoint — not to make specs more programmable.
+
+## Mental model
+
+```
+Spec (canonical) --> Compiler (expansion) --> Runner (execution)
+```
+
+- **Spec**: the canonical behavioral source of truth — authored by humans or LLMs
+- **Expansion**: a fully inlined operational representation — all `use()` calls resolved, all contracts expanded, all sections flattened; this is what the runner executes and what failures are reported against
+- **Runner**: walks the expanded plan sequentially against real systems; a step failure stops the flow immediately
+
+Specs and expanded plans are not interchangeable: specs are authored, plans are derived.
+
+## Example
 
 Ortheon describes long behavioral flows over real systems using only two executable primitives: `browser(...)` and `api(...)`. Steps save named outputs. Later steps assert on them.
 
@@ -50,14 +99,27 @@ export default spec("guest order via API", {
 });
 ```
 
-## Why this shape
+## LLM usage
 
-LLMs and humans both do best when artifacts have repeated structure, low ambiguity, stable names, explicit dependencies, and a small grammar. Ortheon is designed around that constraint.
+Ortheon is designed to be authored and maintained by LLMs.
 
-- No hidden state. No implicit magic. No arbitrary code.
-- Every executable line is a browser action, an API call, or an assertion.
-- Every meaningful result is named so later steps can reference it.
-- Verification of logs, DB state, event buses, or traces happens through HTTP verification endpoints exposed by the system under test -- not through DSL extensions.
+The DSL works well for models because it has:
+
+- a small, fixed grammar
+- repeated structural patterns
+- explicit dataflow via `save` / `ref`
+- no hidden behavior
+- no arbitrary control flow inside specs
+
+Typical loop:
+
+1. LLM generates a spec
+2. Validator returns structured errors
+3. LLM repairs the spec
+4. Spec is executed against real systems
+5. Failures are compared against expectations or against the expanded plan
+
+This makes specs suitable as **behavioral contracts** when modifying or rewriting systems.
 
 ## Installation
 
@@ -222,23 +284,25 @@ Four commands: `run`, `list`, `expand`, and `serve`.
 Two modes:
 
 **Local** — run spec files matching a glob pattern:
+
 ```bash
 ortheon run 'specs/**/*.ortheon.ts'
 ```
 
 **Remote** — fetch an execution plan from an Ortheon server and run it locally:
+
 ```bash
 ortheon run --from http://specs.company.com --suite <id>
 ```
 
-| Flag                | Description                                       | Default   |
-| ------------------- | ------------------------------------------------- | --------- |
-| `--from <url>`      | Base URL of an Ortheon server to fetch a plan from | --       |
-| `--suite <id>`      | Suite ID to fetch (required with `--from`)        | --        |
-| `--reporter <type>` | `console` or `json`                               | `console` |
-| `--headed`          | Show the browser window                           | --        |
-| `--timeout <ms>`    | Default step timeout                              | `30000`   |
-| `--skip-validation` | Skip pre-run validation (local mode only)         | --        |
+| Flag                | Description                                        | Default   |
+| ------------------- | -------------------------------------------------- | --------- |
+| `--from <url>`      | Base URL of an Ortheon server to fetch a plan from | --        |
+| `--suite <id>`      | Suite ID to fetch (required with `--from`)         | --        |
+| `--reporter <type>` | `console` or `json`                                | `console` |
+| `--headed`          | Show the browser window                            | --        |
+| `--timeout <ms>`    | Default step timeout                               | `30000`   |
+| `--skip-validation` | Skip pre-run validation (local mode only)          | --        |
 
 In remote mode, `env()` and `secret()` values in the plan are resolved from your own environment. The server never sees your secrets.
 
@@ -250,15 +314,17 @@ Discover suites available on a remote Ortheon server:
 ortheon list --from http://specs.company.com
 ```
 
-| Flag           | Description                         | Default |
-| -------------- | ----------------------------------- | ------- |
-| `--from <url>` | Base URL of the Ortheon server      | (required) |
+| Flag           | Description                    | Default    |
+| -------------- | ------------------------------ | ---------- |
+| `--from <url>` | Base URL of the Ortheon server | (required) |
 
 Prints a table of suite IDs, names, and tags. Use the ID with `ortheon run --from ... --suite <id>`.
 
 ### `ortheon expand <file>`
 
-Print the fully expanded execution plan for a spec. All `use()` calls inlined, all contracts resolved, all sections flattened. Useful for debugging and LLM consumption.
+Print the fully expanded execution plan for a spec. All `use()` calls inlined, all contracts resolved, all sections flattened.
+
+This is a **normalized operational view**, not a second language. Specs are the canonical source of truth. The expanded plan is derived from them — use it for debugging, failure analysis, or when you need a fully explicit representation for LLM consumption.
 
 ```
 SPEC: authenticated checkout
@@ -283,9 +349,9 @@ Start a local web server for browsing and distributing specs as executable plans
 ortheon serve 'specs/**/*.ortheon.ts' --port 4000
 ```
 
-| Flag               | Description                                             | Default  |
-| ------------------ | ------------------------------------------------------- | -------- |
-| `--port <port>`    | Port to listen on                                       | `4000`   |
+| Flag            | Description       | Default |
+| --------------- | ----------------- | ------- |
+| `--port <port>` | Port to listen on | `4000`  |
 
 `ORTHEON_SERVER_URL` is set automatically to `http://localhost:<port>` so server self-test specs can reach the Ortheon API.
 
@@ -295,39 +361,40 @@ ortheon serve 'specs/**/*.ortheon.ts' --port 4000
 
 ### Trust boundary
 
-| Responsibility      | Owner  |
-| ------------------- | ------ |
-| Spec authorship     | Server |
-| Plan compilation    | Server |
-| Plan distribution   | Server |
-| Execution           | CLI    |
-| env vars / secrets  | CLI    |
+| Responsibility     | Owner  |
+| ------------------ | ------ |
+| Spec authorship    | Server |
+| Plan compilation   | Server |
+| Plan distribution  | Server |
+| Execution          | CLI    |
+| env vars / secrets | CLI    |
 
 The server never sees the user's environment variables or secrets. The CLI resolves `env()` and `secret()` markers from its own process environment.
 
 ### Views
 
-| Path             | Description                                                         |
-| ---------------- | ------------------------------------------------------------------- |
-| `/`              | Dashboard -- card grid of all discovered suites                     |
-| `/suites/:id`    | Suite detail -- metadata, expanded plan, CLI command, plan download |
-| `/contracts`     | Contract catalog                                                    |
-| `/contracts/:name` | Contract detail                                                   |
+| Path               | Description                                                         |
+| ------------------ | ------------------------------------------------------------------- |
+| `/`                | Dashboard -- card grid of all discovered suites                     |
+| `/suites/:id`      | Suite detail -- metadata, expanded plan, CLI command, plan download |
+| `/contracts`       | Contract catalog                                                    |
+| `/contracts/:name` | Contract detail                                                     |
 
 ### API routes
 
 All under `/api`. Suite IDs are base64url-encoded relative file paths.
 
-| Method | Path                              | Description                                                 |
-| ------ | --------------------------------- | ----------------------------------------------------------- |
-| GET    | `/api/suites`                     | List all suites, sorted by path. Optional `?name=` (substring) and `?tag=` (exact) filters. |
-| GET    | `/api/suites/:id`                 | Suite metadata (flowNames, stepCount, apiNames)             |
-| GET    | `/api/suites/:id/plan`            | Browse-oriented expanded plan + validation diagnostics (for web UI) |
-| GET    | `/api/suites/:id/execution-plan`  | Versioned execution plan artifact for CLI consumption       |
-| GET    | `/api/contracts`                  | All contracts aggregated across suites                      |
-| GET    | `/api/contracts/:name`            | Full contract detail                                        |
+| Method | Path                             | Description                                                                                 |
+| ------ | -------------------------------- | ------------------------------------------------------------------------------------------- |
+| GET    | `/api/suites`                    | List all suites, sorted by path. Optional `?name=` (substring) and `?tag=` (exact) filters. |
+| GET    | `/api/suites/:id`                | Suite metadata (flowNames, stepCount, apiNames)                                             |
+| GET    | `/api/suites/:id/plan`           | Browse-oriented expanded plan + validation diagnostics (for web UI)                         |
+| GET    | `/api/suites/:id/execution-plan` | Versioned execution plan artifact for CLI consumption                                       |
+| GET    | `/api/contracts`                 | All contracts aggregated across suites                                                      |
+| GET    | `/api/contracts/:name`           | Full contract detail                                                                        |
 
 `GET /api/suites/:id/execution-plan` returns:
+
 ```json
 {
   "planVersion": 1,
@@ -479,10 +546,10 @@ spec('name', {
 ## Architecture
 
 ```
-DSL (authoring) --> Compiler (expansion) --> Runner (execution)
+Spec (canonical) --> Compiler (expansion) --> Runner (execution)
 ```
 
-- **DSL**: Pure functions that produce typed AST nodes. No side effects.
+- **Spec authoring layer**: Pure functions that produce typed AST nodes. No side effects.
 - **Compiler**: Resolves contracts, expands `use()` calls, flattens sections. Emits a flat `ExecutionPlan`. `baseUrl` stays unresolved -- the runner resolves it at execution time.
 - **Validator**: Two passes. Pass 1 (structural) runs on raw AST. Pass 2 (ref resolution) runs on the expanded plan.
 - **Runner**: Walks the plan sequentially. Resolves dynamic values, executes actions, processes saves, evaluates assertions. A step failure stops the flow immediately.
@@ -503,13 +570,14 @@ This retries the step up to 2 extra times. By default, retries use linear backof
 For **polling** — repeatedly checking until a condition is met — use `retryIntervalMs` to set a fixed interval instead:
 
 ```ts
-step('wait for job to complete',
-  api('getJob', {
-    params: { jobId: ref('jobId') },
-    expect: { status: 200, body: { status: 'done' } },
+step(
+  "wait for job to complete",
+  api("getJob", {
+    params: { jobId: ref("jobId") },
+    expect: { status: 200, body: { status: "done" } },
   }),
-  { retries: 20, retryIntervalMs: 1000 }
-)
+  { retries: 20, retryIntervalMs: 1000 },
+);
 ```
 
 When `retryIntervalMs` is set, every retry waits exactly that many milliseconds regardless of attempt count. Set it explicitly whenever fixed-interval polling is the intent; omitting it leaves the linear-backoff default in place.
