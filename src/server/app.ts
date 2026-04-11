@@ -2,15 +2,11 @@ import express from "express";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
 import { compile, formatExpandedPlan } from "../compiler.js";
 import { validate } from "../validator.js";
-import { runSpec } from "../runner.js";
 import { loadSpecFile } from "../loader.js";
 import type {
   Spec,
-  SpecResult,
-  SpecExpectedOutcome,
   ExecutableStep,
   BrowserStep,
   ApiContract,
@@ -43,90 +39,8 @@ export type ServerSuite = {
   loadError: string | null;
 };
 
-type RunStatus = "pending" | "running" | "pass" | "fail" | "error";
-
-type PlanStepSnapshot = {
-  index: number;
-  actionType: string;
-  actionSummary: string;
-  saves: string[];
-  expects: string[];
-  flowOrigin: string | null;
-};
-
-type RunRecord = {
-  id: string;
-  suiteId: string;
-  suiteName: string;
-  status: RunStatus;
-  startedAt: string;
-  finishedAt: string | null;
-  durationMs: number | null;
-  error: string | null;
-  validation: { errors: string[]; warnings: string[] } | null;
-  result: SpecResult | null;
-  // Intentional historical capture: records the execution plan metadata at run time
-  // so historical runs remain accurate even if the underlying spec changes later.
-  planSnapshot: PlanStepSnapshot[] | null;
-  // Captured from the spec at run creation time so the run can be interpreted
-  // correctly even if the spec's expectedOutcome changes later.
-  expectedOutcome: SpecExpectedOutcome;
-};
-
 // ---------------------------------------------------------------------------
-// Run manager (max 100 runs, FIFO eviction on overflow)
-// ---------------------------------------------------------------------------
-
-const MAX_RUNS = 100;
-
-export class RunManager {
-  private runs: Map<string, RunRecord> = new Map();
-  private order: string[] = [];
-
-  add(run: RunRecord): void {
-    if (this.runs.size >= MAX_RUNS) {
-      const oldest = this.order.shift();
-      if (oldest !== undefined) this.runs.delete(oldest);
-    }
-    this.runs.set(run.id, run);
-    this.order.push(run.id);
-  }
-
-  get(id: string): RunRecord | undefined {
-    return this.runs.get(id);
-  }
-
-  list(): RunRecord[] {
-    const out: RunRecord[] = [];
-    for (const id of this.order) {
-      const r = this.runs.get(id);
-      if (r !== undefined) out.push(r);
-    }
-    return out;
-  }
-
-  update(id: string, updates: Partial<RunRecord>): void {
-    const run = this.runs.get(id);
-    if (run !== undefined) Object.assign(run, updates);
-  }
-
-  lastRunForSuite(suiteId: string): RunRecord | undefined {
-    for (let i = this.order.length - 1; i >= 0; i--) {
-      const id = this.order[i];
-      if (id === undefined) continue;
-      const run = this.runs.get(id);
-      if (run !== undefined && run.suiteId === suiteId) return run;
-    }
-    return undefined;
-  }
-
-  size(): number {
-    return this.runs.size;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Action summary formatters (for the plan endpoint)
+// Action summary formatters (for the /plan browse endpoint)
 // ---------------------------------------------------------------------------
 
 function formatActionSummary(step: ExecutableStep): string {
@@ -166,63 +80,6 @@ function formatExpectSummaries(step: ExecutableStep): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Run response mapper
-// ---------------------------------------------------------------------------
-
-function isTerminalStatus(status: RunStatus): boolean {
-  return status === "pass" || status === "fail" || status === "error";
-}
-
-function mapRunToResponse(run: RunRecord): object {
-  let stepIdx = 0;
-  const flows =
-    run.result !== null
-      ? run.result.flows.map((f) => ({
-          name: f.name,
-          steps: f.steps.map((s) => {
-            const snap = run.planSnapshot?.[stepIdx];
-            stepIdx++;
-            return {
-              name: s.name,
-              section: s.section ?? null,
-              flowOrigin: s.flowOrigin ?? null,
-              status: s.status as "pass" | "fail" | "skip",
-              durationMs: s.durationMs,
-              error: s.error ?? null,
-              actionType: snap?.actionType ?? null,
-              actionSummary: snap?.actionSummary ?? null,
-              saves: snap?.saves ?? [],
-              expects: snap?.expects ?? [],
-            };
-          }),
-          passed: f.passed,
-          failed: f.failed,
-          skipped: f.skipped,
-        }))
-      : null;
-
-  return {
-    id: run.id,
-    suiteId: run.suiteId,
-    suiteName: run.suiteName,
-    status: run.status,
-    expectedOutcome: run.expectedOutcome,
-    meetsExpectedOutcome: isTerminalStatus(run.status)
-      ? run.status === run.expectedOutcome
-      : null,
-    startedAt: run.startedAt,
-    finishedAt: run.finishedAt,
-    durationMs: run.durationMs,
-    error: run.error,
-    validation: run.validation,
-    flows,
-    totalSteps: run.result !== null ? run.result.totalSteps : null,
-    passedSteps: run.result !== null ? run.result.passedSteps : null,
-    failedSteps: run.result !== null ? run.result.failedSteps : null,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Suite step count (flattening sections)
 // ---------------------------------------------------------------------------
 
@@ -247,10 +104,7 @@ function countSteps(spec: Spec): number {
 // Express app factory
 // ---------------------------------------------------------------------------
 
-export function createApp(
-  suites: ServerSuite[],
-  runManager: RunManager,
-): express.Application {
+export function createApp(suites: ServerSuite[]): express.Application {
   const app = express();
   app.use(express.json());
 
@@ -315,31 +169,16 @@ export function createApp(
       return true;
     });
 
-    const result = filtered.map((s) => {
-      const lastRun = runManager.lastRunForSuite(s.id);
-      return {
-        id: s.id,
-        name: s.name,
-        path: s.relativePath,
-        flowCount: s.spec !== null ? s.spec.flows.length : 0,
-        tags: s.spec !== null ? (s.spec.tags ?? []) : [],
-        hasError: s.loadError !== null,
-        expectedOutcome: s.spec?.expectedOutcome ?? "pass",
-        lastRun:
-          lastRun !== undefined
-            ? {
-                id: lastRun.id,
-                status: lastRun.status,
-                expectedOutcome: lastRun.expectedOutcome,
-                meetsExpectedOutcome: isTerminalStatus(lastRun.status)
-                  ? lastRun.status === lastRun.expectedOutcome
-                  : null,
-                startedAt: lastRun.startedAt,
-                durationMs: lastRun.durationMs,
-              }
-            : null,
-      };
-    });
+    const result = filtered.map((s) => ({
+      id: s.id,
+      name: s.name,
+      path: s.relativePath,
+      flowCount: s.spec !== null ? s.spec.flows.length : 0,
+      tags: s.spec !== null ? (s.spec.tags ?? []) : [],
+      hasError: s.loadError !== null,
+      expectedOutcome: s.spec?.expectedOutcome ?? "pass",
+    }));
+
     res.json({ suites: result });
   });
 
@@ -372,7 +211,10 @@ export function createApp(
   });
 
   // -------------------------------------------------------------------------
-  // GET /api/suites/:id/plan -- expanded execution plan + validation
+  // GET /api/suites/:id/plan -- browse-oriented expanded plan for the web UI
+  //
+  // Returns display-friendly summaries: step action strings, rendered plan
+  // text, and validation diagnostics. Not intended for CLI consumption.
   // -------------------------------------------------------------------------
 
   app.get("/api/suites/:id/plan", (req, res) => {
@@ -436,6 +278,50 @@ export function createApp(
   });
 
   // -------------------------------------------------------------------------
+  // GET /api/suites/:id/execution-plan -- versioned machine-readable artifact
+  //
+  // Returns the raw ExecutionPlan for CLI consumption. env() and secret()
+  // markers are preserved unresolved — the CLI resolves them from the user's
+  // own environment. planVersion allows the CLI to detect format changes.
+  // -------------------------------------------------------------------------
+
+  app.get("/api/suites/:id/execution-plan", (req, res) => {
+    const suite = suiteMap.get(req.params["id"] ?? "");
+    if (suite === undefined) {
+      res.status(404).json({ error: "Suite not found" });
+      return;
+    }
+    if (suite.loadError !== null || suite.spec === null) {
+      res.status(500).json({ error: suite.loadError ?? "Failed to load spec" });
+      return;
+    }
+
+    let plan: ReturnType<typeof compile>;
+    try {
+      plan = compile(suite.spec);
+    } catch (err) {
+      res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    const validation = validate(suite.spec, plan);
+
+    res.json({
+      planVersion: 1,
+      plan,
+      validation: {
+        errors: validation.errors.map((e) => e.message),
+        warnings: validation.warnings.map((w) => w.message),
+      },
+      expectedOutcome: suite.spec.expectedOutcome ?? "pass",
+      tags: suite.spec.tags ?? [],
+      safety: suite.spec.safety ?? null,
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // GET /api/contracts -- list all contracts aggregated across suites
   // -------------------------------------------------------------------------
 
@@ -472,255 +358,12 @@ export function createApp(
     });
   });
 
-  // -------------------------------------------------------------------------
-  // POST /api/suites/:id/run -- start an async run
-  // -------------------------------------------------------------------------
-
-  app.post("/api/suites/:id/run", (req, res) => {
-    const suite = suiteMap.get(req.params["id"] ?? "");
-    if (suite === undefined) {
-      res.status(404).json({ error: "Suite not found" });
-      return;
-    }
-
-    // Validate body shape (no run overrides accepted — baseUrl/headed/timeoutMs would be a security risk)
-    const body = req.body as Record<string, unknown> | undefined | null;
-    if (body !== undefined && body !== null && typeof body !== "object") {
-      res.status(400).json({ error: "Request body must be a JSON object" });
-      return;
-    }
-
-    // If the suite failed to load, create an immediate error run
-    if (suite.loadError !== null || suite.spec === null) {
-      const run: RunRecord = {
-        id: randomUUID(),
-        suiteId: suite.id,
-        suiteName: suite.name,
-        status: "error",
-        expectedOutcome: "pass",
-        startedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
-        durationMs: 0,
-        error: suite.loadError ?? "Failed to load spec",
-        validation: null,
-        result: null,
-        planSnapshot: null,
-      };
-      runManager.add(run);
-      res.status(201).json({ runId: run.id });
-      return;
-    }
-
-    const run: RunRecord = {
-      id: randomUUID(),
-      suiteId: suite.id,
-      suiteName: suite.spec.name,
-      status: "pending",
-      expectedOutcome: suite.spec.expectedOutcome ?? "pass",
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      durationMs: null,
-      error: null,
-      validation: null,
-      result: null,
-      planSnapshot: null,
-    };
-    runManager.add(run);
-
-    void executeRun(run, suite.spec, runManager);
-
-    res.status(201).json({ runId: run.id });
-  });
-
-  // -------------------------------------------------------------------------
-  // POST /api/run-all -- start a run for every suite (optionally filtered)
-  //
-  // Optional JSON body: { excludeTags?: string[] }
-  // excludeTags skips any suite that has at least one of the listed tags.
-  // No run overrides (baseUrl/headed/timeoutMs) — security: server uses spec + env only.
-  // -------------------------------------------------------------------------
-
-  app.post("/api/run-all", (req, res) => {
-    const body = req.body as Record<string, unknown> | undefined | null;
-    if (body !== undefined && body !== null && typeof body !== "object") {
-      res.status(400).json({ error: "Request body must be a JSON object" });
-      return;
-    }
-
-    const excludeTags: string[] = Array.isArray(body?.["excludeTags"])
-      ? (body["excludeTags"] as unknown[])
-          .filter((t): t is string => typeof t === "string")
-          .map((t) => t.toLowerCase())
-      : [];
-
-    const runIds: string[] = [];
-
-    for (const suite of suites) {
-      if (excludeTags.length > 0) {
-        const suiteTags = (suite.spec?.tags ?? []).map((t) => t.toLowerCase());
-        if (suiteTags.some((t) => excludeTags.includes(t))) continue;
-      }
-      if (suite.loadError !== null || suite.spec === null) {
-        const run: RunRecord = {
-          id: randomUUID(),
-          suiteId: suite.id,
-          suiteName: suite.name,
-          status: "error",
-          expectedOutcome: "pass",
-          startedAt: new Date().toISOString(),
-          finishedAt: new Date().toISOString(),
-          durationMs: 0,
-          error: suite.loadError ?? "Failed to load spec",
-          validation: null,
-          result: null,
-          planSnapshot: null,
-        };
-        runManager.add(run);
-        runIds.push(run.id);
-        continue;
-      }
-
-      const run: RunRecord = {
-        id: randomUUID(),
-        suiteId: suite.id,
-        suiteName: suite.spec.name,
-        status: "pending",
-        expectedOutcome: suite.spec.expectedOutcome ?? "pass",
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        durationMs: null,
-        error: null,
-        validation: null,
-        result: null,
-        planSnapshot: null,
-      };
-      runManager.add(run);
-      runIds.push(run.id);
-
-      void executeRun(run, suite.spec, runManager);
-    }
-
-    res.status(201).json({ runIds });
-  });
-
-  // -------------------------------------------------------------------------
-  // GET /api/runs -- list all runs (summaries)
-  // -------------------------------------------------------------------------
-
-  app.get("/api/runs", (_req, res) => {
-    const runs = runManager.list().map((r) => ({
-      id: r.id,
-      suiteId: r.suiteId,
-      suiteName: r.suiteName,
-      status: r.status,
-      expectedOutcome: r.expectedOutcome,
-      meetsExpectedOutcome: isTerminalStatus(r.status)
-        ? r.status === r.expectedOutcome
-        : null,
-      startedAt: r.startedAt,
-      durationMs: r.durationMs,
-    }));
-    res.json({ runs });
-  });
-
-  // -------------------------------------------------------------------------
-  // GET /api/runs/:id -- full run detail
-  // -------------------------------------------------------------------------
-
-  app.get("/api/runs/:id", (req, res) => {
-    const run = runManager.get(req.params["id"] ?? "");
-    if (run === undefined) {
-      res.status(404).json({ error: "Run not found" });
-      return;
-    }
-    res.json(mapRunToResponse(run));
-  });
-
   // SPA fallback -- must be declared last
   app.get("*", (_req, res) => {
     res.sendFile(join(pagesDir, "index.html"));
   });
 
   return app;
-}
-
-// ---------------------------------------------------------------------------
-// Background run execution (validate first, then run)
-// ---------------------------------------------------------------------------
-
-async function executeRun(
-  run: RunRecord,
-  spec: Spec,
-  manager: RunManager,
-): Promise<void> {
-  const startTime = Date.now();
-  manager.update(run.id, { status: "running" });
-
-  // Always validate before running
-  let compiledOk = false;
-  try {
-    const plan = compile(spec);
-    const validation = validate(spec, plan);
-
-    // Snapshot plan step metadata for historical capture in the run record.
-    // This ensures the run view can show action summaries even after the spec changes.
-    const planSnapshot: PlanStepSnapshot[] = plan.steps.map((s, index) => ({
-      index,
-      actionType: s.action.__type,
-      actionSummary: formatActionSummary(s),
-      saves: Object.keys(s.saves),
-      expects: formatExpectSummaries(s),
-      flowOrigin: s.flowOrigin ?? null,
-    }));
-
-    manager.update(run.id, {
-      planSnapshot,
-      validation: {
-        errors: validation.errors.map((e) => e.message),
-        warnings: validation.warnings.map((w) => w.message),
-      },
-    });
-
-    if (!validation.valid) {
-      manager.update(run.id, {
-        status: "error",
-        finishedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTime,
-        error: `Validation failed: ${validation.errors.map((e) => e.message).join("; ")}`,
-      });
-      return;
-    }
-
-    compiledOk = true;
-  } catch (err) {
-    manager.update(run.id, {
-      status: "error",
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return;
-  }
-
-  if (!compiledOk) return;
-
-  // Execute the spec (no overrides — baseUrl/headed/timeout come from spec + env only)
-  try {
-    const result = await runSpec(spec, { skipValidation: true });
-    manager.update(run.id, {
-      status: result.status === "pass" ? "pass" : "fail",
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-      result,
-    });
-  } catch (err) {
-    manager.update(run.id, {
-      status: "error",
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -764,8 +407,7 @@ export async function startServer(
   suites: ServerSuite[],
   port = 4000,
 ): Promise<ReturnType<typeof createServer>> {
-  const runManager = new RunManager();
-  const app = createApp(suites, runManager);
+  const app = createApp(suites);
 
   return new Promise((resolve, reject) => {
     const server = createServer(app);

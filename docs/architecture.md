@@ -197,60 +197,95 @@ Console reporter prints section-grouped output with pass/fail icons and duration
 
 ## Server layer
 
-`src/server/app.ts` provides a web interface over the same compilation and execution primitives the CLI uses.
+`src/server/app.ts` is a spec registry and plan distribution service. **The server does not execute specs.** Execution is the CLI's responsibility.
 
 ```
-┌─────────────────────────┐
-│      Server Layer       │
-│  src/server/app.ts      │  Express app, suite discovery, run management
-│  src/server/pages/      │  Thin SPA (HTML + CSS + vanilla JS)
-└────────────┬────────────┘
-             │  calls compile(), validate(), runSpec()
-┌────────────▼────────────┐
-│   Compilation + Exec.   │
-│  (same as CLI)          │
-└─────────────────────────┘
+┌─────────────────────────────┐
+│        Server Layer         │
+│  src/server/app.ts          │  Express app, suite discovery, plan compilation
+│  src/server/pages/          │  Thin SPA (HTML + CSS + vanilla JS)
+└──────────────┬──────────────┘
+               │  calls compile(), validate()
+┌──────────────▼──────────────┐
+│     Compilation only        │
+│  (compiler.ts, validator.ts) │
+└─────────────────────────────┘
+
+   CLI user
+   ────────
+   ortheon run --from <url> --suite <id>
+     1. fetches execution plan from server (GET /api/suites/:id/execution-plan)
+     2. resolves env() markers from local environment
+     3. calls runPlan(plan)
+     4. reports to console
 ```
+
+### Trust boundary
+
+| Responsibility     | Owner  |
+| ------------------ | ------ |
+| Spec authorship    | Server |
+| Plan compilation   | Server |
+| Plan distribution  | Server |
+| Execution          | CLI    |
+| env vars / secrets | CLI    |
+
+The server never sees the user's environment variables or secrets. The CLI resolves `env()` and `secret()` markers from its own process environment at execution time.
 
 ### Suite discovery
 
-`discoverSuites()` runs once at startup against the glob passed to `ortheon serve`. Each matched file is dynamically imported (`import(path)`), the default export is compiled and validated, and a summary is cached. Suite IDs are base64url-encoded relative file paths -- stable and URL-safe.
+`discoverSuites()` runs once at startup against the glob passed to `ortheon serve`. Each matched file is dynamically imported (`import(path)`), the default export is compiled and validated, and a summary is cached. Suite IDs are base64url-encoded relative file paths — stable and URL-safe.
 
-### Run manager (`RunManager`)
+### Execution plan artifact
 
-In-memory ring buffer of up to 100 runs, keyed by UUID. Runs move through three states:
+`GET /api/suites/:id/execution-plan` compiles and validates the spec and returns a versioned artifact:
 
+```json
+{
+  "planVersion": 1,
+  "plan": { "specName": "...", "baseUrl": { "__type": "env", "name": "MY_APP_URL" }, "steps": [...], "flowRanges": [...], ... },
+  "validation": { "errors": [], "warnings": [] },
+  "expectedOutcome": "pass",
+  "tags": [],
+  "safety": null
+}
 ```
-pending --> running --> completed | error
-```
 
-`executeRun()` is fire-and-forget: the POST responds with `{ runId }` immediately and the run executes asynchronously. Callers poll `GET /api/runs/:id` until `status` is no longer `running`.
-
-Runs are lost on server restart. If the server is being used as ephemeral infrastructure (CI), this is fine. Persistence is out of scope.
+`env()` and `secret()` markers in `plan` are preserved unresolved. The CLI's `runPlan()` resolves them from its own `process.env`. `planVersion` is a forward-compatibility signal — the CLI can warn on unknown versions.
 
 ### API surface
 
-Six routes. All paths return JSON. Suite endpoints always reload the spec file at request time for metadata accuracy. The plan endpoint reruns compilation to compute the expanded step list.
+Six routes. All paths return JSON. Suite endpoints recompile at request time for accuracy. The `/plan` endpoint serves the web UI; the `/execution-plan` endpoint serves the CLI.
 
 **`GET /api/suites`** accepts two optional query parameters:
-- `?name=<substring>` -- case-insensitive substring match on suite name
-- `?tag=<value>` -- case-insensitive exact match against suite tags (not substring)
+- `?name=<substring>` — case-insensitive substring match on suite name
+- `?tag=<value>` — case-insensitive exact match against suite tags (not substring)
 
 Results are always sorted lexically by relative file path, which gives stable ordering across requests and makes test assertions against `suites[0]` reliable.
 
-The POST `/api/suites/:id/run` and `/api/run-all` handlers do not accept run overrides (`headed`, `baseUrl`, `timeoutMs`). The server runs specs using only the spec definition and process environment, so clients cannot redirect runs to arbitrary URLs (SSRF). Each spec's `baseUrl` is resolved from whichever `env()` key it declares at runtime.
-
-`GET /api/runs/:id` returns a `flows` array that preserves the authored top-level flow structure from the spec (via the `flowRanges` in the compiled plan). Each flow entry contains its original name, its steps, and pass/fail/skip counts.
+| Route                             | Purpose                                          |
+| --------------------------------- | ------------------------------------------------ |
+| `GET /api/suites`                 | List all suites with summary metadata            |
+| `GET /api/suites/:id`             | Suite metadata (flowNames, stepCount, apiNames)  |
+| `GET /api/suites/:id/plan`        | Browse-oriented expanded plan (for web UI)       |
+| `GET /api/suites/:id/execution-plan` | Versioned plan artifact for CLI consumption   |
+| `GET /api/contracts`              | All contracts aggregated across suites           |
+| `GET /api/contracts/:name`        | Full contract detail                             |
 
 ### SPA (`src/server/pages/`)
 
-Three views rendered client-side with History API routing, all driven by `data-testid` attributes so the UI can be tested with Ortheon's own browser steps.
+Four views rendered client-side with History API routing, driven by `data-testid` attributes so the UI can be tested with Ortheon's own browser steps.
 
-| View       | Route             | What it shows                                    |
-| ---------- | ----------------- | ------------------------------------------------ |
-| Dashboard  | `/`               | Suite cards (name, step count, tags)             |
-| Detail     | `/suites/:id`     | Metadata, expanded plan, validation errors, Run  |
-| Run        | `/runs/:id`       | Step-by-step results with live polling           |
+| View              | Route              | What it shows                                              |
+| ----------------- | ------------------ | ---------------------------------------------------------- |
+| Dashboard         | `/`                | Suite cards (name, step count, tags)                       |
+| Detail            | `/suites/:id`      | Metadata, expanded plan, validation errors, CLI command    |
+| Contracts         | `/contracts`       | All declared API contracts                                 |
+| Contract detail   | `/contracts/:name` | Contract metadata with request/response shapes             |
+
+The suite detail page shows:
+- The copyable CLI command to run the suite: `ortheon run --from <server> --suite <id>`
+- A link to download the raw execution plan JSON
 
 The SPA is a static delivery mechanism only. All behavioral logic lives in the API.
 

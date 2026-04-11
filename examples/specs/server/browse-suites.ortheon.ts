@@ -93,6 +93,32 @@ export default spec('ortheon server: browse and expand', {
           ),
         ]),
 
+        section('execution plan artifact', [
+          step('get execution plan for first suite',
+            api('getSuiteExecutionPlan', {
+              params: { id: ref('firstSuiteId') },
+              expect: {
+                status: 200,
+                body: {
+                  planVersion: existsCheck(),
+                  plan: existsCheck(),
+                  validation: existsCheck(),
+                },
+              },
+              save: {
+                planVersion: 'body.planVersion',
+                execPlanSpecName: 'body.plan.specName',
+              },
+            })
+          ),
+          step('execution plan version is 1',
+            expect(ref('planVersion'), 'equals', 1)
+          ),
+          step('execution plan specName matches list name',
+            expect(ref('execPlanSpecName'), 'equals', ref('firstSuiteName'))
+          ),
+        ]),
+
         section('known suite assertions', [
           // These steps require the known health suite to be in the server's suite list.
           // They use the health spec's known ID (base64url of its relative path).
@@ -204,15 +230,6 @@ export default spec('ortheon server: browse and expand', {
           ),
         ]),
 
-        section('unknown run 404', [
-          step('get non-existent run',
-            api('getRun', {
-              params: { runId: '00000000-0000-0000-0000-000000000000' },
-              expect: { status: 404 },
-            })
-          ),
-        ]),
-
         section('suite filtering', [
           step('filter suites by known name',
             api('listSuites', {
@@ -261,9 +278,6 @@ export default spec('ortheon server: browse and expand', {
           step('wait for suite list to appear',
             browser('waitFor', { target: '[data-testid="suite-list"]', state: 'visible' })
           ),
-          step('runs tab is visible',
-            browser('waitFor', { target: '[data-testid="runs-tab"]', state: 'visible' })
-          ),
           step('search input is visible',
             browser('waitFor', { target: '[data-testid="search-input"]', state: 'visible' })
           ),
@@ -278,12 +292,6 @@ export default spec('ortheon server: browse and expand', {
           ),
         ]),
 
-        section('run all button', [
-          step('run all button is visible on dashboard',
-            browser('waitFor', { target: '[data-testid="run-all-button"]', state: 'visible' })
-          ),
-        ]),
-
         section('suite detail navigation', [
           step('click first suite card',
             browser('click', { target: '[data-testid="suite-card"]:first-child' })
@@ -294,8 +302,14 @@ export default spec('ortheon server: browse and expand', {
           step('wait for plan steps to appear',
             browser('waitFor', { target: '[data-testid="plan-steps"]', state: 'visible' })
           ),
-          step('run button is visible',
-            browser('waitFor', { target: '[data-testid="run-button"]', state: 'visible' })
+          step('CLI launcher panel is visible',
+            browser('waitFor', { target: '[data-testid="cli-launcher"]', state: 'visible' })
+          ),
+          step('CLI command is shown',
+            browser('waitFor', { target: '[data-testid="cli-command"]', state: 'visible' })
+          ),
+          step('download plan link is visible',
+            browser('waitFor', { target: '[data-testid="download-plan-link"]', state: 'visible' })
           ),
         ]),
 

@@ -315,7 +315,7 @@ Specs reference environment variables through `env()` and `secret()`:
 baseUrl: env('MY_APP_URL')
 ```
 
-Set them before running:
+Set them before running locally:
 
 ```bash
 MY_APP_URL=http://localhost:3000 \
@@ -323,6 +323,17 @@ E2E_USER_EMAIL=buyer@example.com \
 E2E_USER_PASSWORD=password123 \
 ortheon run 'specs/**/*.ortheon.ts'
 ```
+
+Or, when running against a remote server, set them before fetching and executing the plan:
+
+```bash
+MY_APP_URL=http://staging.company.com \
+E2E_USER_EMAIL=buyer@example.com \
+E2E_USER_PASSWORD=password123 \
+ortheon run --from http://specs.company.com --suite <id>
+```
+
+`env()` and `secret()` markers are preserved unresolved in the execution plan distributed by the server. The CLI resolves them from your local environment — the server never sees your secrets.
 
 Or use a `.env` loader of your choice.
 

@@ -24,17 +24,19 @@ export type RunOptions = {
   skipValidation?: boolean
 }
 
+// Options for runPlan() -- no baseUrl (resolved from plan's env() marker) or skipValidation.
+export type RunPlanOptions = {
+  headed?: boolean
+  timeoutMs?: number
+}
+
 // ---------------------------------------------------------------------------
-// Main entry point: run a spec
+// Main entry points
 // ---------------------------------------------------------------------------
 
 export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<SpecResult> {
-  const startTime = Date.now()
-
-  // Compile the spec into an execution plan
   const plan = compile(spec)
 
-  // Optionally validate before running
   if (!options.skipValidation) {
     const result = validate(spec, plan)
     if (!result.valid) {
@@ -43,16 +45,36 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
     }
   }
 
-  // Determine base URL: CLI override > spec config > env
-  const baseUrl = options.baseUrl ?? resolveBaseUrl(plan, spec)
+  // CLI override > spec config > env
+  const baseUrl = options.baseUrl ?? resolveBaseUrl(plan)
 
-  // Initialize runtime context
+  return executeCompiledPlan(plan, baseUrl, options)
+}
+
+// Run a pre-compiled ExecutionPlan fetched from a server or produced externally.
+// Skips compilation and validation — the server is assumed to have done both.
+// env() and secret() markers in the plan are resolved from the caller's process.env.
+export async function runPlan(plan: ExecutionPlan, options: RunPlanOptions = {}): Promise<SpecResult> {
+  const baseUrl = resolveBaseUrl(plan)
+  return executeCompiledPlan(plan, baseUrl, options)
+}
+
+// ---------------------------------------------------------------------------
+// Shared execution core
+// ---------------------------------------------------------------------------
+
+async function executeCompiledPlan(
+  plan: ExecutionPlan,
+  baseUrl: string,
+  options: { headed?: boolean; timeoutMs?: number },
+): Promise<SpecResult> {
+  const startTime = Date.now()
+
   const ctx = new RuntimeContext()
-  if (spec.data) {
-    ctx.loadData(spec.data)
+  if (plan.data && Object.keys(plan.data).length > 0) {
+    ctx.loadData(plan.data)
   }
 
-  // Launch browser session (lazily: only if any step needs it)
   let browserSession: BrowserSession | null = null
   const needsBrowser = plan.steps.some(s => s.action.__type === 'browser')
 
@@ -92,7 +114,6 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
   }
 
   // Regroup step results back into authored flows using the plan's flow ranges.
-  // Zero-step flows produce an empty FlowResult (passed/failed/skipped all 0).
   const flowResults = plan.flowRanges.map(range => {
     const steps = stepResults.slice(range.startIndex, range.startIndex + range.stepCount)
     return {
@@ -108,7 +129,7 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
   const failedCount = stepResults.filter(s => s.status === 'fail').length
 
   return {
-    specName: spec.name,
+    specName: plan.specName,
     status: failed ? 'fail' : 'pass',
     flows: flowResults,
     totalSteps: plan.steps.length,
@@ -258,7 +279,7 @@ async function executeStep(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveBaseUrl(plan: ExecutionPlan, spec: Spec): string {
+function resolveBaseUrl(plan: ExecutionPlan): string {
   const baseUrl = plan.baseUrl
 
   if (typeof baseUrl === 'string' && baseUrl) return baseUrl
@@ -268,11 +289,16 @@ function resolveBaseUrl(plan: ExecutionPlan, spec: Spec): string {
     if (dynamic.__type === 'env' && dynamic.name) {
       const val = process.env[dynamic.name]
       if (val) return val
+      throw new Error(
+        `No baseUrl configured for "${plan.specName}": ` +
+        `env variable "${dynamic.name}" is not set.\n` +
+        `Set ${dynamic.name} in your environment and try again.`
+      )
     }
   }
 
   throw new Error(
-    `No baseUrl configured for spec "${spec.name}".\n` +
+    `No baseUrl configured for "${plan.specName}".\n` +
     'Set the appropriate environment variable for the env() key declared in the spec.'
   )
 }

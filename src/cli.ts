@@ -3,10 +3,10 @@ import { program } from 'commander'
 import { readFileSync } from 'node:fs'
 import { compile, formatExpandedPlan } from './compiler.js'
 import { validate } from './validator.js'
-import { runSpec } from './runner.js'
+import { runSpec, runPlan } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
 import { resolveGlob, loadSpecFile } from './loader.js'
-import type { Spec, SpecResult } from './types.js'
+import type { ExecutionPlan, Spec, SpecResult } from './types.js'
 
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf-8')
@@ -18,63 +18,90 @@ program
   .version(packageJson.version)
 
 // ---------------------------------------------------------------------------
-// ortheon run <glob>
+// ortheon run [glob]
+//
+// Two modes:
+//   Local:  ortheon run 'specs/**/*.ortheon.ts'
+//   Remote: ortheon run --from <url> --suite <id>
 // ---------------------------------------------------------------------------
 
 program
-  .command('run <glob>')
-  .description('Run spec files matching the given glob pattern')
+  .command('run [glob]')
+  .description('Run specs from local files or fetch and run a plan from a remote server')
+  .option('--from <url>', 'Base URL of an Ortheon server to fetch the plan from')
+  .option('--suite <id>', 'Suite ID to fetch from the remote server (required with --from)')
   .option('--reporter <type>', 'Output format: console | json (default: console)', 'console')
   .option('--headed', 'Run browser in headed mode (show the browser window)')
   .option('--timeout <ms>', 'Default step timeout in milliseconds', '30000')
-  .option('--skip-validation', 'Skip pre-run validation')
-  .action(async (glob: string, options: {
+  .option('--skip-validation', 'Skip pre-run validation (local mode only)')
+  .action(async (glob: string | undefined, options: {
+    from?: string
+    suite?: string
     reporter: string
     headed?: boolean
     timeout: string
     skipValidation?: boolean
   }) => {
-    const files = await resolveGlob(glob)
+    if (options.from !== undefined) {
+      await runRemote(options.from, options.suite, options)
+    } else {
+      if (!glob) {
+        console.error('Error: a glob pattern is required when --from is not specified')
+        console.error('  Usage: ortheon run <glob>')
+        console.error('         ortheon run --from <url> --suite <id>')
+        process.exit(1)
+      }
+      await runLocal(glob, options)
+    }
+  })
 
-    if (files.length === 0) {
-      console.error(`No spec files found matching: ${glob}`)
+// ---------------------------------------------------------------------------
+// ortheon list --from <url>
+//
+// Discover suites on a remote Ortheon server.
+// ---------------------------------------------------------------------------
+
+program
+  .command('list')
+  .description('List suites available on a remote Ortheon server')
+  .requiredOption('--from <url>', 'Base URL of the Ortheon server')
+  .action(async (options: { from: string }) => {
+    const baseUrl = options.from.replace(/\/$/, '')
+    let data: { suites: Array<{ id: string; name: string; path: string; tags: string[]; expectedOutcome: string }> }
+
+    try {
+      const res = await fetch(`${baseUrl}/api/suites`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        console.error(`Error fetching suites: ${body.error ?? `HTTP ${res.status}`}`)
+        process.exit(1)
+      }
+      data = await res.json() as typeof data
+    } catch (err) {
+      console.error(`Failed to connect to ${baseUrl}:`)
+      console.error(err instanceof Error ? err.message : String(err))
       process.exit(1)
     }
 
-    const results: SpecResult[] = []
-    let anyFailed = false
-
-    for (const file of files) {
-      const spec = await loadSpecForCli(file)
-      if (!spec) continue
-
-      try {
-        const result = await runSpec(spec, {
-          ...(options.headed !== undefined ? { headed: options.headed } : {}),
-          ...(options.skipValidation !== undefined ? { skipValidation: options.skipValidation } : {}),
-        })
-
-        results.push(result)
-
-        if (options.reporter === 'json') {
-          jsonReport(result)
-        } else {
-          consoleReport(result)
-        }
-
-        if (result.status === 'fail') anyFailed = true
-      } catch (err) {
-        console.error(`\nError running spec "${file}":`)
-        console.error(err instanceof Error ? err.message : String(err))
-        anyFailed = true
-      }
+    const suites = data.suites
+    if (suites.length === 0) {
+      console.log('No suites found on the remote server.')
+      process.exit(0)
     }
 
-    if (options.reporter !== 'json' && results.length > 1) {
-      consoleSummary(results)
+    const maxIdLen = Math.max(8, ...suites.map(s => s.id.length))
+    const maxNameLen = Math.max(4, ...suites.map(s => s.name.length))
+
+    console.log(`Suites at ${baseUrl}:\n`)
+    console.log(`${'ID'.padEnd(maxIdLen)}  ${'NAME'.padEnd(maxNameLen)}  TAGS`)
+    console.log(`${'-'.repeat(maxIdLen)}  ${'-'.repeat(maxNameLen)}  ----`)
+
+    for (const s of suites) {
+      const tags = s.tags.length > 0 ? s.tags.join(', ') : ''
+      console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${tags}`)
     }
 
-    process.exit(anyFailed ? 1 : 0)
+    console.log(`\n${suites.length} suite(s). Run with: ortheon run --from ${baseUrl} --suite <id>`)
   })
 
 // ---------------------------------------------------------------------------
@@ -115,7 +142,7 @@ program
 
 program
   .command('serve <glob>')
-  .description('Start the Ortheon web server for browsing and running specs')
+  .description('Start the Ortheon web server for browsing and distributing specs')
   .option('--port <port>', 'Port to listen on', '4000')
   .action(async (glob: string, options: {
     port: string
@@ -129,8 +156,7 @@ program
     const cwd = process.cwd()
     const serverUrl = `http://localhost:${port}`
 
-    // ORTHEON_SERVER_URL is always set to this server's own address so
-    // specs like run-suites.ortheon.ts can call the ortheon API directly.
+    // ORTHEON_SERVER_URL is set so specs that call the server API know its address.
     process.env['ORTHEON_SERVER_URL'] ??= serverUrl
 
     const { discoverSuites, startServer } = await import('./server/app.js')
@@ -143,14 +169,140 @@ program
       process.exit(1)
     }
 
-    // Each spec resolves its own base URL from its env() references.
-    // POST /api/suites/:id/run body.baseUrl can still override per-run.
     await startServer(suites, port)
   })
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+async function runLocal(
+  glob: string,
+  options: { reporter: string; headed?: boolean; timeout: string; skipValidation?: boolean },
+): Promise<void> {
+  const files = await resolveGlob(glob)
+
+  if (files.length === 0) {
+    console.error(`No spec files found matching: ${glob}`)
+    process.exit(1)
+  }
+
+  const results: SpecResult[] = []
+  let anyFailed = false
+
+  for (const file of files) {
+    const spec = await loadSpecForCli(file)
+    if (!spec) continue
+
+    try {
+      const result = await runSpec(spec, {
+        ...(options.headed !== undefined ? { headed: options.headed } : {}),
+        ...(options.skipValidation !== undefined ? { skipValidation: options.skipValidation } : {}),
+        timeoutMs: parseInt(options.timeout, 10),
+      })
+
+      results.push(result)
+
+      if (options.reporter === 'json') {
+        jsonReport(result)
+      } else {
+        consoleReport(result)
+      }
+
+      if (result.status === 'fail') anyFailed = true
+    } catch (err) {
+      console.error(`\nError running spec "${file}":`)
+      console.error(err instanceof Error ? err.message : String(err))
+      anyFailed = true
+    }
+  }
+
+  if (options.reporter !== 'json' && results.length > 1) {
+    consoleSummary(results)
+  }
+
+  process.exit(anyFailed ? 1 : 0)
+}
+
+async function runRemote(
+  fromUrl: string,
+  suiteId: string | undefined,
+  options: { reporter: string; headed?: boolean; timeout: string },
+): Promise<void> {
+  if (!suiteId) {
+    console.error('Error: --suite <id> is required when using --from')
+    console.error(`  Tip: run "ortheon list --from ${fromUrl}" to see available suites`)
+    process.exit(1)
+  }
+
+  const baseUrl = fromUrl.replace(/\/$/, '')
+  const artifactUrl = `${baseUrl}/api/suites/${encodeURIComponent(suiteId)}/execution-plan`
+
+  console.log(`Fetching plan from: ${artifactUrl}`)
+
+  let artifact: {
+    planVersion: number
+    plan: ExecutionPlan
+    validation: { errors: string[]; warnings: string[] }
+    expectedOutcome: string
+    tags: string[]
+    safety: string | null
+  }
+
+  try {
+    const res = await fetch(artifactUrl)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string }
+      console.error(`Error fetching plan: ${body.error ?? `HTTP ${res.status}`}`)
+      process.exit(1)
+    }
+    artifact = await res.json() as typeof artifact
+  } catch (err) {
+    console.error(`Failed to connect to ${baseUrl}:`)
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  }
+
+  // Warn about unknown plan versions
+  if (artifact.planVersion !== 1) {
+    console.warn(`Warning: plan version ${artifact.planVersion} is newer than this CLI supports (v1). Some features may not work correctly.`)
+  }
+
+  // Abort on validation errors from the server
+  if (artifact.validation.errors.length > 0) {
+    console.error(`Plan has validation errors:`)
+    for (const err of artifact.validation.errors) {
+      console.error(`  error: ${err}`)
+    }
+    process.exit(1)
+  }
+
+  if (artifact.validation.warnings.length > 0) {
+    for (const warn of artifact.validation.warnings) {
+      console.warn(`  warning: ${warn}`)
+    }
+  }
+
+  let result: SpecResult
+  try {
+    result = await runPlan(artifact.plan, {
+      ...(options.headed !== undefined ? { headed: options.headed } : {}),
+      timeoutMs: parseInt(options.timeout, 10),
+    })
+  } catch (err) {
+    console.error(`\nError running plan:`)
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  }
+
+  if (options.reporter === 'json') {
+    jsonReport(result)
+  } else {
+    consoleReport(result)
+  }
+
+  process.exit(result.status === 'fail' ? 1 : 0)
+}
 
 async function loadSpecForCli(file: string): Promise<Spec | null> {
   const result = await loadSpecFile(file)
