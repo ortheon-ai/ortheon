@@ -12,6 +12,8 @@ import type {
   Flow,
   FlowConfig,
   FlowItem,
+  GenerateKind,
+  GenerateValue,
   MatcherName,
   RefValue,
   Resolvable,
@@ -59,6 +61,21 @@ export function bearer(token: DynamicValue | string): BearerValue {
  */
 export function existsCheck(): ExistsCheck {
   return { __type: 'exists_check' }
+}
+
+/** Generate a fresh value at execution time (not at module load).
+ *  Use this in spec data blocks where a unique value is required per run.
+ *
+ *  Kinds:
+ *  - `'uuid'`         — a random UUID (crypto.randomUUID)
+ *  - `'timestamp'`    — current epoch milliseconds as a string
+ *  - `'unique-email'` — `prefix+<timestamp>@domain` (requires options.prefix and options.domain)
+ *
+ *  @example
+ *  data: { email: generate('unique-email', { prefix: 'test', domain: 'example.com' }) }
+ */
+export function generate(kind: GenerateKind, options?: Record<string, string>): GenerateValue {
+  return { __type: 'generate', kind, ...(options ? { options } : {}) }
 }
 
 // ---------------------------------------------------------------------------
@@ -172,4 +189,4 @@ export function spec(name: string, config: SpecConfig): Spec {
 // Re-export types for spec file convenience
 // ---------------------------------------------------------------------------
 
-export type { BearerValue, Flow, FlowItem, Spec, SpecExpectedOutcome, Step, Section, ApiContract } from './types.js'
+export type { BearerValue, GenerateKind, GenerateValue, Flow, FlowItem, Spec, SpecExpectedOutcome, Step, Section, ApiContract } from './types.js'

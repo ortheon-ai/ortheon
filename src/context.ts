@@ -1,4 +1,5 @@
-import type { BearerValue, DynamicValue, EnvValue, RefValue, SecretValue } from './types.js'
+import { randomUUID } from 'node:crypto'
+import type { BearerValue, DynamicValue, EnvValue, GenerateValue, RefValue, SecretValue } from './types.js'
 
 // ---------------------------------------------------------------------------
 // Dot-path resolution utilities
@@ -148,6 +149,8 @@ export class RuntimeContext {
         return this.resolveSecret(value)
       case 'bearer':
         return this.resolveBearer(value)
+      case 'generate':
+        return this.resolveGenerate(value)
     }
   }
 
@@ -192,6 +195,20 @@ export class RuntimeContext {
     return `Bearer ${inner}`
   }
 
+  private resolveGenerate(value: GenerateValue): string {
+    switch (value.kind) {
+      case 'uuid':
+        return randomUUID()
+      case 'timestamp':
+        return String(Date.now())
+      case 'unique-email': {
+        const prefix = value.options?.['prefix'] ?? 'ortheon'
+        const domain = value.options?.['domain'] ?? 'example.com'
+        return `${prefix}+${Date.now()}@${domain}`
+      }
+    }
+  }
+
   /** Recursively resolve all DynamicValues within an arbitrary value tree. */
   resolveDeep(value: unknown): unknown {
     if (value === null || value === undefined) return value
@@ -212,7 +229,7 @@ export class RuntimeContext {
       typeof value === 'object' &&
       value !== null &&
       '__type' in value &&
-      ['ref', 'env', 'secret', 'bearer'].includes((value as { __type: string }).__type)
+      ['ref', 'env', 'secret', 'bearer', 'generate'].includes((value as { __type: string }).__type)
     )
   }
 

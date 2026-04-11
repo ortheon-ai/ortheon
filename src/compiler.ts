@@ -72,7 +72,7 @@ function buildFlowMap(flows: Flow[]): Map<string, Flow> {
 
 // Substitute ref(inputName) values in a step's options with the caller-provided bindings.
 // This is compile-time substitution: ref("email") -> ref("data.user.email") (or a literal).
-const DYNAMIC_TYPES = new Set(['ref', 'env', 'secret', 'bearer'])
+const DYNAMIC_TYPES = new Set(['ref', 'env', 'secret', 'bearer', 'generate'])
 
 function substituteRefs(value: unknown, bindings: Record<string, Resolvable<unknown>>): unknown {
   if (value === null || value === undefined) return value
