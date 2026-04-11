@@ -34,9 +34,16 @@ if (needsTsx) {
     process.exit(1)
   }
   try {
+    // Preserve existing Node.js flags (--inspect, --max-old-space-size, etc.).
+    // Strip any pre-existing --import tsx pair so tsx is not registered twice.
+    const execArgv = process.execArgv.filter((a, i, arr) => {
+      if (a === '--import' && arr[i + 1] === 'tsx') return false
+      if (a === 'tsx' && arr[i - 1] === '--import') return false
+      return true
+    })
     execFileSync(
       process.execPath,
-      ['--import', 'tsx', ...process.argv.slice(1)],
+      ['--import', 'tsx', ...execArgv, ...process.argv.slice(1)],
       { stdio: 'inherit', env: { ...process.env, '__ORTHEON_TSX': '1' } },
     )
     process.exit(0)
