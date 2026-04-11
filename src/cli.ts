@@ -198,6 +198,7 @@ async function runLocal(
       const result = await runSpec(spec, {
         ...(options.headed !== undefined ? { headed: options.headed } : {}),
         ...(options.skipValidation !== undefined ? { skipValidation: options.skipValidation } : {}),
+        timeoutMs: parseInt(options.timeout, 10),
       })
 
       results.push(result)
@@ -286,6 +287,7 @@ async function runRemote(
   try {
     result = await runPlan(artifact.plan, {
       ...(options.headed !== undefined ? { headed: options.headed } : {}),
+      timeoutMs: parseInt(options.timeout, 10),
     })
   } catch (err) {
     console.error(`\nError running plan:`)
