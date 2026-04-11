@@ -206,6 +206,8 @@ export class RuntimeContext {
         const domain = value.options?.['domain'] ?? 'example.com'
         return `${prefix}+${Date.now()}@${domain}`
       }
+      default:
+        throw new Error(`generate(): unrecognized kind "${(value as GenerateValue).kind}"`)
     }
   }
 

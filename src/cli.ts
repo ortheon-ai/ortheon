@@ -35,8 +35,9 @@ if (needsTsx) {
   }
   try {
     // Preserve existing Node.js flags (--inspect, --max-old-space-size, etc.).
-    // Strip any pre-existing --import tsx pair so tsx is not registered twice.
+    // Strip any pre-existing --import tsx / --import=tsx so tsx is not registered twice.
     const execArgv = process.execArgv.filter((a, i, arr) => {
+      if (a === '--import=tsx') return false
       if (a === '--import' && arr[i + 1] === 'tsx') return false
       if (a === 'tsx' && arr[i - 1] === '--import') return false
       return true
