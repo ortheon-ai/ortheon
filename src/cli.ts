@@ -6,9 +6,24 @@
 // so we detect .ts usage early and spawn a child process with --import tsx.
 // ---------------------------------------------------------------------------
 
-const needsTsx =
-  !process.env['__ORTHEON_TSX'] &&
-  process.argv.slice(2).some(a => a.endsWith('.ts') || a.endsWith('.tsx') || a.includes('*.ortheon.ts'))
+// Only inspect positional arguments for .ts/.tsx extensions.
+// Flag values (e.g. URLs passed to --from) must be skipped — a URL like
+// https://specs.example.ts ends in ".ts" but is not a TypeScript file.
+const needsTsx = (() => {
+  if (process.env['__ORTHEON_TSX']) return false
+  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port'])
+  const args = process.argv.slice(2)
+  const positional: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!
+    if (a.startsWith('-')) {
+      if (flagsWithValues.has(a)) i++ // skip this flag's value
+    } else {
+      positional.push(a)
+    }
+  }
+  return positional.some(a => a.endsWith('.ts') || a.endsWith('.tsx'))
+})()
 
 if (needsTsx) {
   const { execFileSync } = await import('node:child_process')
