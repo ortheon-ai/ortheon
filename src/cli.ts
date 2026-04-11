@@ -1,4 +1,35 @@
 #!/usr/bin/env node
+
+// ---------------------------------------------------------------------------
+// Auto-detect TypeScript specs and re-exec with tsx if needed.
+// tsx cannot be registered at runtime (it requires --import at startup),
+// so we detect .ts usage early and spawn a child process with --import tsx.
+// ---------------------------------------------------------------------------
+
+const needsTsx =
+  !process.env['__ORTHEON_TSX'] &&
+  process.argv.slice(2).some(a => a.endsWith('.ts') || a.endsWith('.tsx') || a.includes('*.ortheon.ts'))
+
+if (needsTsx) {
+  const { execFileSync } = await import('node:child_process')
+  try {
+    await import('tsx' as string)
+  } catch {
+    console.error('TypeScript spec files require tsx. Install it: npm install -D tsx')
+    process.exit(1)
+  }
+  try {
+    execFileSync(
+      process.execPath,
+      ['--import', 'tsx', ...process.argv.slice(1)],
+      { stdio: 'inherit', env: { ...process.env, '__ORTHEON_TSX': '1' } },
+    )
+    process.exit(0)
+  } catch (err) {
+    process.exit((err as { status?: number }).status ?? 1)
+  }
+}
+
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
 import { compile, formatExpandedPlan } from './compiler.js'
