@@ -363,9 +363,10 @@ function formatAction(action: ExecutableStep['action']): string {
     return `${action.method} ${action.path}${baseSuffix}`
   }
   if (action.__type === 'browser') {
-    const bAction = action as BrowserStep & { action: string; target?: unknown; url?: unknown }
+    const bAction = action as BrowserStep & { action: string; target?: unknown; url?: unknown; base?: string }
     const target = bAction.target ?? bAction.url ?? ''
-    return `browser(${bAction.action}, ${JSON.stringify(target)})`
+    const baseSuffix = bAction.action === 'goto' && bAction.base ? ` [base: ${bAction.base}]` : ''
+    return `browser(${bAction.action}, ${JSON.stringify(target)})${baseSuffix}`
   }
   if (action.__type === 'expect') {
     return `expect(...)`
