@@ -390,10 +390,7 @@ describe('runSpec', () => {
         ],
       })
 
-      const result = await runSpec(theSpec, { skipValidation: true })
-      expect(result.status).toBe('fail')
-      const stepError = result.flows.flatMap(f => f.steps).find(s => s.status === 'fail')?.error ?? ''
-      expect(stepError).toMatch(/references base "admn" which is not defined/)
+      await expect(runSpec(theSpec, { skipValidation: true })).rejects.toThrow(/references base "admn" which is not defined/)
     })
   })
 

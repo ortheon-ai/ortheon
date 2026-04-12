@@ -364,25 +364,35 @@ function resolveUrls(plan: ExecutionPlan): Record<string, string> {
   return result
 }
 
-/** Throw eagerly if the default URL is empty and any step needs it. */
+/** Throw eagerly for URL problems that would otherwise surface mid-execution:
+ *  1. The default URL is empty and at least one step needs it.
+ *  2. A step references a named base that does not exist in the resolved map.
+ *  Both are checked before the browser is launched so CI (no Playwright) fails cleanly. */
 function assertDefaultUrlIfNeeded(plan: ExecutionPlan, resolvedUrls: Record<string, string>): void {
-  if (resolvedUrls['default']) return
-  const needsDefault = plan.steps.some(s => {
+  for (const s of plan.steps) {
+    let base: string | undefined
     if (s.action.__type === 'api') {
-      const base = (s.action as ResolvedApiStep).base
-      return base === undefined || base === 'default'
-    }
-    if (s.action.__type === 'browser') {
+      base = (s.action as ResolvedApiStep).base
+    } else if (s.action.__type === 'browser') {
       const bAction = s.action as { action: string; base?: string }
-      return bAction.action === 'goto' && (bAction.base === undefined || bAction.base === 'default')
+      if (bAction.action === 'goto') base = bAction.base
     }
-    return false
-  })
-  if (needsDefault) {
-    throw new Error(
-      `No baseUrl configured for "${plan.specName}".\n` +
-      'Set the appropriate environment variable for the env() key declared in the spec.'
-    )
+
+    const targetBase = base ?? 'default'
+
+    if (!(targetBase in resolvedUrls)) {
+      throw new Error(
+        `Step "${s.name}" references base "${targetBase}" which is not defined in the spec's urls map.\n` +
+        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+      )
+    }
+
+    if (!resolvedUrls[targetBase] && targetBase === 'default') {
+      throw new Error(
+        `No baseUrl configured for "${plan.specName}".\n` +
+        'Set the appropriate environment variable for the env() key declared in the spec.'
+      )
+    }
   }
 }
 
