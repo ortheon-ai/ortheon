@@ -341,6 +341,19 @@ describe('named URLs (multi-URL support)', () => {
       })
     })
 
+    it('plan.baseUrl mirrors urls["default"] when urls["default"] overrides baseUrl', () => {
+      // When the caller explicitly passes urls: { default: '...' }, it should win over baseUrl,
+      // and plan.baseUrl must reflect that override — not the stale spec.baseUrl value.
+      const s = spec('test', {
+        baseUrl: 'http://original.example.com',
+        urls: { default: 'http://override.example.com', payments: 'http://payments.example.com' },
+        flows: [flow('main', { steps: [step('ping', api('GET /ping', {}))] })],
+      })
+      const plan = compile(s)
+      expect(plan.urls['default']).toBe('http://override.example.com')
+      expect(plan.baseUrl).toBe('http://override.example.com')
+    })
+
     it('propagates contract-level base onto ResolvedApiStep', () => {
       const s = spec('test', {
         baseUrl: 'http://app.example.com',

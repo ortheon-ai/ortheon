@@ -280,16 +280,17 @@ export function compile(spec: Spec): ExecutionPlan {
   }
 
   // Build the unified urls map. baseUrl is the 'default' entry; spec.urls adds named entries.
-  // Explicit urls['default'] (if provided) overrides baseUrl as the default.
-  const defaultUrl = spec.baseUrl ?? ''
+  // Explicit urls['default'] (if provided) overrides the baseUrl-derived default.
   const urls: Record<string, Resolvable<string>> = {
-    default: defaultUrl,
+    default: spec.baseUrl ?? '',
     ...(spec.urls ?? {}),
   }
 
   return {
     specName: spec.name,
-    baseUrl: defaultUrl,
+    // Mirror urls['default'] so that an explicit urls['default'] override is reflected here too.
+    // Non-null assertion: 'default' is always set in the literal above the spread.
+    baseUrl: urls['default']!,
     urls,
     apis,
     data,
