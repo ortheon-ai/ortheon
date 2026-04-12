@@ -314,3 +314,95 @@ describe('formatExpandedPlan', () => {
     expect(output).toContain('GET /api/health')
   })
 })
+
+describe('named URLs (multi-URL support)', () => {
+  describe('compile()', () => {
+    it('emits urls map with default from baseUrl', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        flows: [flow('main', { steps: [step('ping', api('GET /ping', {}))] })],
+      })
+      const plan = compile(s)
+      expect(plan.urls).toEqual({ default: 'http://app.example.com' })
+      expect(plan.baseUrl).toBe('http://app.example.com')
+    })
+
+    it('merges named urls with default', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        urls: { payments: 'http://payments.example.com', admin: 'http://admin.example.com' },
+        flows: [flow('main', { steps: [step('ping', api('GET /ping', {}))] })],
+      })
+      const plan = compile(s)
+      expect(plan.urls).toEqual({
+        default: 'http://app.example.com',
+        payments: 'http://payments.example.com',
+        admin: 'http://admin.example.com',
+      })
+    })
+
+    it('propagates contract-level base onto ResolvedApiStep', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        urls: { payments: 'http://payments.example.com' },
+        apis: {
+          charge: { method: 'POST', path: '/api/charge', base: 'payments' },
+        },
+        flows: [flow('main', { steps: [step('charge', api('charge', {}))] })],
+      })
+      const plan = compile(s)
+      const action = plan.steps[0]!.action
+      expect(action.__type).toBe('api')
+      if (action.__type === 'api') {
+        expect(action.base).toBe('payments')
+      }
+    })
+
+    it('step-level base overrides contract-level base', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        urls: { payments: 'http://payments.example.com', admin: 'http://admin.example.com' },
+        apis: {
+          charge: { method: 'POST', path: '/api/charge', base: 'payments' },
+        },
+        flows: [
+          flow('main', {
+            steps: [step('charge via admin', api('charge', { base: 'admin' }))],
+          }),
+        ],
+      })
+      const plan = compile(s)
+      const action = plan.steps[0]!.action
+      if (action.__type === 'api') {
+        expect(action.base).toBe('admin')
+      }
+    })
+
+    it('leaves base undefined for steps with no base on contract or options', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        apis: { health: { method: 'GET', path: '/api/health' } },
+        flows: [flow('main', { steps: [step('check', api('health', {}))] })],
+      })
+      const plan = compile(s)
+      const action = plan.steps[0]!.action
+      if (action.__type === 'api') {
+        expect(action.base).toBeUndefined()
+      }
+    })
+
+    it('formatExpandedPlan shows named URL entries and base suffix', () => {
+      const s = spec('multi-url', {
+        baseUrl: 'http://app.example.com',
+        urls: { payments: 'http://payments.example.com' },
+        apis: { charge: { method: 'POST', path: '/api/charge', base: 'payments' } },
+        flows: [flow('main', { steps: [step('charge', api('charge', {}))] })],
+      })
+      const plan = compile(s)
+      const output = formatExpandedPlan(plan)
+      expect(output).toContain('BASE URL: http://app.example.com')
+      expect(output).toContain('URL [payments]: http://payments.example.com')
+      expect(output).toContain('POST /api/charge [base: payments]')
+    })
+  })
+})

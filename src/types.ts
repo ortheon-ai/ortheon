@@ -44,7 +44,7 @@ export type WaitForOptions =
   | { url: Resolvable<string>; timeout?: number }
 
 export type BrowserOptions =
-  | { action: 'goto'; url: Resolvable<string> }
+  | { action: 'goto'; url: Resolvable<string>; base?: string }
   | { action: 'click'; target: Resolvable<string> }
   | { action: 'type'; target: Resolvable<string>; value: Resolvable<string> }
   | { action: 'press'; target: Resolvable<string>; key: string }
@@ -70,6 +70,8 @@ export type InlineExpect = {
 }
 
 export type ApiOptions = {
+  // Logical URL name from the spec's urls map. Overrides any base on the contract.
+  base?: string
   params?: Record<string, Resolvable<string>>
   query?: Record<string, Resolvable<string>>
   headers?: Record<string, Resolvable<string>>
@@ -150,6 +152,8 @@ export type Flow = {
 export type ApiContract = {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   path: string
+  // Logical URL name from the spec's urls map. Omit to use the default (baseUrl).
+  base?: string
   purpose?: string
   request?: {
     params?: Record<string, string>
@@ -178,6 +182,9 @@ export type SpecExpectedOutcome = 'pass' | 'error'
 export type Spec = {
   name: string
   baseUrl?: Resolvable<string>
+  // Named URL targets. Keys are logical names; 'default' is used when no base is specified.
+  // baseUrl is always merged in as 'default' by the compiler.
+  urls?: Record<string, Resolvable<string>>
   apis?: Record<string, ApiContract>
   data?: Record<string, unknown>
   tags?: string[]
@@ -196,6 +203,8 @@ export type ResolvedApiStep = {
   __type: 'api'
   method: string
   path: string
+  // Resolved logical URL name (from step options or contract). Absent means 'default'.
+  base?: string
   options: ApiOptions
 }
 
@@ -232,7 +241,11 @@ export type FlowRange = {
 
 export type ExecutionPlan = {
   specName: string
+  // Kept for backward compatibility. Mirrors urls['default'].
   baseUrl: Resolvable<string>
+  // Named URL map. Always includes 'default'. env()/secret() markers are preserved
+  // for remote-plan consumers to resolve from their own environment.
+  urls: Record<string, Resolvable<string>>
   apis: Record<string, ApiContract>
   data: Record<string, unknown>
   steps: ExecutableStep[]

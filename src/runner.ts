@@ -45,18 +45,25 @@ export async function runSpec(spec: Spec, options: RunOptions = {}): Promise<Spe
     }
   }
 
-  // CLI override > spec config > env
-  const baseUrl = options.baseUrl ?? resolveBaseUrl(plan)
+  // CLI override > spec config > env. The override applies to the 'default' URL only.
+  const resolvedUrls = resolveUrls(plan)
+  if (options.baseUrl) {
+    resolvedUrls['default'] = options.baseUrl
+  }
 
-  return executeCompiledPlan(plan, baseUrl, options)
+  // Fail fast if the default URL is still empty and any step will need it.
+  assertDefaultUrlIfNeeded(plan, resolvedUrls)
+
+  return executeCompiledPlan(plan, resolvedUrls, options)
 }
 
 // Run a pre-compiled ExecutionPlan fetched from a server or produced externally.
 // Skips compilation and validation — the server is assumed to have done both.
 // env() and secret() markers in the plan are resolved from the caller's process.env.
 export async function runPlan(plan: ExecutionPlan, options: RunPlanOptions = {}): Promise<SpecResult> {
-  const baseUrl = resolveBaseUrl(plan)
-  return executeCompiledPlan(plan, baseUrl, options)
+  const resolvedUrls = resolveUrls(plan)
+  assertDefaultUrlIfNeeded(plan, resolvedUrls)
+  return executeCompiledPlan(plan, resolvedUrls, options)
 }
 
 // ---------------------------------------------------------------------------
@@ -65,7 +72,7 @@ export async function runPlan(plan: ExecutionPlan, options: RunPlanOptions = {})
 
 async function executeCompiledPlan(
   plan: ExecutionPlan,
-  baseUrl: string,
+  resolvedUrls: Record<string, string>,
   options: { headed?: boolean; timeoutMs?: number },
 ): Promise<SpecResult> {
   const startTime = Date.now()
@@ -100,7 +107,7 @@ async function executeCompiledPlan(
         continue
       }
 
-      const result = await runStep(step, ctx, baseUrl, browserSession, options)
+      const result = await runStep(step, ctx, resolvedUrls, browserSession, options)
       stepResults.push(result)
 
       if (result.status === 'fail') {
@@ -146,7 +153,7 @@ async function executeCompiledPlan(
 async function runStep(
   step: ExecutableStep,
   ctx: RuntimeContext,
-  baseUrl: string,
+  resolvedUrls: Record<string, string>,
   browserSession: BrowserSession | null,
   options: RunOptions
 ): Promise<StepResult> {
@@ -156,7 +163,7 @@ async function runStep(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const startTime = Date.now()
     try {
-      await executeStep(step, ctx, baseUrl, browserSession, options)
+      await executeStep(step, ctx, resolvedUrls, browserSession, options)
       return {
         name: step.name,
         ...(step.section !== undefined ? { section: step.section } : {}),
@@ -197,7 +204,7 @@ async function runStep(
 async function executeStep(
   step: ExecutableStep,
   ctx: RuntimeContext,
-  baseUrl: string,
+  resolvedUrls: Record<string, string>,
   browserSession: BrowserSession | null,
   options: RunOptions
 ): Promise<void> {
@@ -205,6 +212,20 @@ async function executeStep(
 
   if (action.__type === 'api') {
     const apiAction = action as ResolvedApiStep
+    const targetBase = apiAction.base ?? 'default'
+    const stepBaseUrl = resolvedUrls[targetBase]
+    if (!stepBaseUrl) {
+      if (targetBase === 'default') {
+        throw new Error(
+          'No baseUrl configured for this spec.\n' +
+          'Set the appropriate environment variable for the env() key declared in the spec.'
+        )
+      }
+      throw new Error(
+        `Step "${step.name}" references base "${targetBase}" which is not defined in the spec's urls map.\n` +
+        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+      )
+    }
     const response = await executeApiCall(
       {
         method: apiAction.method,
@@ -214,7 +235,7 @@ async function executeStep(
         ...(apiAction.options.headers !== undefined ? { headers: apiAction.options.headers as Record<string, string> } : {}),
         ...(apiAction.options.body !== undefined ? { body: apiAction.options.body } : {}),
       },
-      baseUrl,
+      stepBaseUrl,
       ctx,
       options.timeoutMs
     )
@@ -249,7 +270,10 @@ async function executeStep(
     if (!browserSession) {
       throw new Error('Browser step encountered but no browser session is active')
     }
-    await executeBrowserStep(action, browserSession, ctx, baseUrl)
+    // For goto, honour the base field; all other browser actions ignore it.
+    const browserBase = action.action === 'goto' ? ((action as { base?: string }).base ?? 'default') : 'default'
+    const browserBaseUrl = resolvedUrls[browserBase] ?? resolvedUrls['default'] ?? ''
+    await executeBrowserStep(action, browserSession, ctx, browserBaseUrl)
 
     // Browser extract steps save their values inside executeBrowserStep
     // No additional save processing needed here
@@ -279,28 +303,63 @@ async function executeStep(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveBaseUrl(plan: ExecutionPlan): string {
-  const baseUrl = plan.baseUrl
+function resolveUrlEntry(key: string, value: import('./types.js').Resolvable<string>, specName: string): string {
+  if (typeof value === 'string' && value) return value
 
-  if (typeof baseUrl === 'string' && baseUrl) return baseUrl
-
-  if (typeof baseUrl === 'object' && baseUrl !== null && '__type' in baseUrl) {
-    const dynamic = baseUrl as { __type: string; name?: string }
+  if (typeof value === 'object' && value !== null && '__type' in value) {
+    const dynamic = value as { __type: string; name?: string }
     if (dynamic.__type === 'env' && dynamic.name) {
       const val = process.env[dynamic.name]
-      if (val) return val
+      if (val !== undefined) return val
+      const label = key === 'default' ? 'baseUrl' : `urls["${key}"]`
       throw new Error(
-        `No baseUrl configured for "${plan.specName}": ` +
+        `No URL configured for "${specName}" (${label}): ` +
         `env variable "${dynamic.name}" is not set.\n` +
         `Set ${dynamic.name} in your environment and try again.`
       )
     }
   }
 
+  const label = key === 'default' ? 'baseUrl' : `urls["${key}"]`
   throw new Error(
-    `No baseUrl configured for "${plan.specName}".\n` +
+    `No URL configured for "${specName}" (${label}).\n` +
     'Set the appropriate environment variable for the env() key declared in the spec.'
   )
+}
+
+function resolveUrls(plan: ExecutionPlan): Record<string, string> {
+  const result: Record<string, string> = {}
+  // plan.urls may be absent on plans constructed before this feature was added.
+  const urlMap = plan.urls ?? { default: plan.baseUrl }
+  for (const [key, value] of Object.entries(urlMap)) {
+    // For a literal empty string (spec declared no baseUrl), defer the error to
+    // step execution -- specs that exclusively use named bases are still valid.
+    if (typeof value === 'string' && !value) {
+      result[key] = ''
+      continue
+    }
+    result[key] = resolveUrlEntry(key, value, plan.specName)
+  }
+  if (!('default' in result)) {
+    result['default'] = ''
+  }
+  return result
+}
+
+/** Throw eagerly if the default URL is empty and any step needs it. */
+function assertDefaultUrlIfNeeded(plan: ExecutionPlan, resolvedUrls: Record<string, string>): void {
+  if (resolvedUrls['default']) return
+  const needsDefault = plan.steps.some(s => {
+    if (s.action.__type !== 'api') return false
+    const base = (s.action as ResolvedApiStep).base
+    return base === undefined || base === 'default'
+  })
+  if (needsDefault) {
+    throw new Error(
+      `No baseUrl configured for "${plan.specName}".\n` +
+      'Set the appropriate environment variable for the env() key declared in the spec.'
+    )
+  }
 }
 
 function sleep(ms: number): Promise<void> {

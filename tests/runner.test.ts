@@ -687,6 +687,79 @@ describe('runPlan', () => {
     expect(result.status).toBe('pass')
   })
 
+  it('routes steps to named URLs from the urls map', async () => {
+    // Two separate servers simulating 'app' and 'payments' services
+    const { server: appServer, url: appUrl } = await startTestServer({
+      'GET /api/health': { status: 200, body: { ok: true } },
+    })
+    const { server: paymentsServer, url: paymentsUrl } = await startTestServer({
+      'POST /api/charge': { status: 201, body: { charged: true } },
+    })
+    server = appServer
+    const servers = [appServer, paymentsServer]
+
+    try {
+      const theSpec = spec('multi-url', {
+        baseUrl: appUrl,
+        urls: { payments: paymentsUrl },
+        apis: {
+          health: { method: 'GET', path: '/api/health' },
+          charge: { method: 'POST', path: '/api/charge', base: 'payments' },
+        },
+        flows: [
+          flow('main', {
+            steps: [
+              step('health check', api('health', { expect: { status: 200 } })),
+              step('charge', api('charge', { expect: { status: 201 } })),
+            ],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec)
+      expect(result.status).toBe('pass')
+      expect(result.passedSteps).toBe(2)
+    } finally {
+      servers.forEach(s => s.close())
+      server = null
+    }
+  })
+
+  it('allows step-level base to override contract-level base at runtime', async () => {
+    const { server: s1, url: url1 } = await startTestServer({
+      'POST /api/charge': { status: 201, body: { charged: true } },
+    })
+    const { server: s2, url: url2 } = await startTestServer({
+      'POST /api/charge': { status: 200, body: { charged: true } },
+    })
+    server = s1
+    const servers = [s1, s2]
+
+    try {
+      const theSpec = spec('override-base', {
+        baseUrl: 'http://unused.example.com',
+        urls: { a: url1, b: url2 },
+        apis: {
+          charge: { method: 'POST', path: '/api/charge', base: 'a' },
+        },
+        flows: [
+          flow('main', {
+            steps: [
+              // Override contract base 'a' with 'b' at call site
+              step('charge via b', api('charge', { base: 'b', expect: { status: 200 } })),
+            ],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec)
+      expect(result.status).toBe('pass')
+    } finally {
+      servers.forEach(s => s.close())
+      server = null
+    }
+  })
+
   it('accepts a plain ExecutionPlan object without going through compile()', async () => {
     const { server: s, url } = await startTestServer({
       'GET /api/raw': { status: 200, body: { ok: true } },
@@ -697,6 +770,7 @@ describe('runPlan', () => {
     const rawPlan: ExecutionPlan = {
       specName: 'raw-plan',
       baseUrl: url,
+      urls: { default: url },
       apis: {},
       data: {},
       steps: [
