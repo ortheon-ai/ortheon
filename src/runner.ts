@@ -350,9 +350,15 @@ function resolveUrls(plan: ExecutionPlan): Record<string, string> {
 function assertDefaultUrlIfNeeded(plan: ExecutionPlan, resolvedUrls: Record<string, string>): void {
   if (resolvedUrls['default']) return
   const needsDefault = plan.steps.some(s => {
-    if (s.action.__type !== 'api') return false
-    const base = (s.action as ResolvedApiStep).base
-    return base === undefined || base === 'default'
+    if (s.action.__type === 'api') {
+      const base = (s.action as ResolvedApiStep).base
+      return base === undefined || base === 'default'
+    }
+    if (s.action.__type === 'browser') {
+      const bAction = s.action as { action: string; base?: string }
+      return bAction.action === 'goto' && (bAction.base === undefined || bAction.base === 'default')
+    }
+    return false
   })
   if (needsDefault) {
     throw new Error(

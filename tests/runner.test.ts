@@ -4,7 +4,7 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { runSpec, runPlan } from '../src/runner.js'
 import { compile } from '../src/compiler.js'
-import { spec, flow, step, api, expect as orth_expect, ref, env } from '../src/dsl.js'
+import { spec, flow, step, api, browser, expect as orth_expect, ref, env } from '../src/dsl.js'
 import type { ExecutionPlan } from '../src/types.js'
 
 // ---------------------------------------------------------------------------
@@ -334,6 +334,45 @@ describe('runSpec', () => {
       })
 
       await expect(runSpec(theSpec)).rejects.toThrow('No baseUrl')
+    })
+
+    it('throws "No baseUrl configured" for a browser goto step with no baseUrl', async () => {
+      // A spec with no baseUrl but a browser goto step using the default base should
+      // throw the clear "No baseUrl configured" error early, not a confusing Playwright error.
+      const theSpec = spec('no-url-browser', {
+        flows: [
+          flow('main', {
+            steps: [step('open page', browser('goto', { url: '/home' }))],
+          }),
+        ],
+      })
+
+      await expect(runSpec(theSpec)).rejects.toThrow('No baseUrl')
+    })
+
+    it('does NOT throw "No baseUrl configured" for browser goto when a named base is used', async () => {
+      // A spec with no baseUrl but a goto that targets a named base is valid at plan level;
+      // assertDefaultUrlIfNeeded should not fire. Any failure is at execution time (e.g.
+      // "no browser session"), not the early "No baseUrl configured" message.
+      const theSpec = spec('no-default-url', {
+        urls: { admin: 'http://admin.example.com' },
+        flows: [
+          flow('main', {
+            steps: [step('open admin', browser('goto', { url: '/dashboard', base: 'admin' }))],
+          }),
+        ],
+      })
+
+      let caughtMessage: string | undefined
+      try {
+        await runSpec(theSpec)
+      } catch (e) {
+        caughtMessage = (e as Error).message
+      }
+      // Either no throw, or a different error (e.g. "no browser session") -- never the early baseUrl check.
+      if (caughtMessage !== undefined) {
+        expect(caughtMessage).not.toMatch('No baseUrl configured')
+      }
     })
   })
 
