@@ -270,26 +270,29 @@ async function executeStep(
     if (!browserSession) {
       throw new Error('Browser step encountered but no browser session is active')
     }
-    // For goto, honour the base field; all other browser actions ignore it.
-    const browserBase = action.action === 'goto' ? ((action as { base?: string }).base ?? 'default') : 'default'
-    if (!(browserBase in resolvedUrls)) {
-      throw new Error(
-        `Step "${step.name}" references base "${browserBase}" which is not defined in the spec's urls map.\n` +
-        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
-      )
-    }
-    const browserBaseUrl = resolvedUrls[browserBase]!
-    if (!browserBaseUrl) {
-      if (browserBase === 'default') {
+    // Only goto uses a base URL; all other browser actions operate on the already-loaded page.
+    let browserBaseUrl = ''
+    if (action.action === 'goto') {
+      const browserBase = (action as { base?: string }).base ?? 'default'
+      if (!(browserBase in resolvedUrls)) {
         throw new Error(
-          'No baseUrl configured for this spec.\n' +
-          'Set the appropriate environment variable for the env() key declared in the spec.'
+          `Step "${step.name}" references base "${browserBase}" which is not defined in the spec's urls map.\n` +
+          `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
         )
       }
-      throw new Error(
-        `Step "${step.name}" references base "${browserBase}" which is not defined in the spec's urls map.\n` +
-        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
-      )
+      browserBaseUrl = resolvedUrls[browserBase]!
+      if (!browserBaseUrl) {
+        if (browserBase === 'default') {
+          throw new Error(
+            'No baseUrl configured for this spec.\n' +
+            'Set the appropriate environment variable for the env() key declared in the spec.'
+          )
+        }
+        throw new Error(
+          `Step "${step.name}" references base "${browserBase}" which is not defined in the spec's urls map.\n` +
+          `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+        )
+      }
     }
     await executeBrowserStep(action, browserSession, ctx, browserBaseUrl)
 
@@ -367,18 +370,22 @@ function resolveUrls(plan: ExecutionPlan): Record<string, string> {
 /** Throw eagerly for URL problems that would otherwise surface mid-execution:
  *  1. The default URL is empty and at least one step needs it.
  *  2. A step references a named base that does not exist in the resolved map.
- *  Both are checked before the browser is launched so CI (no Playwright) fails cleanly. */
+ *  Both are checked before the browser is launched so CI (no Playwright) fails cleanly.
+ *  Steps that never use a URL (expect steps, non-goto browser actions) are skipped. */
 function assertDefaultUrlIfNeeded(plan: ExecutionPlan, resolvedUrls: Record<string, string>): void {
   for (const s of plan.steps) {
-    let base: string | undefined
+    // Determine the base only for steps that actually make a network/navigation call.
+    // expect steps and non-goto browser actions (click, type, …) don't use a URL at all.
+    let targetBase: string | undefined
+
     if (s.action.__type === 'api') {
-      base = (s.action as ResolvedApiStep).base
+      targetBase = (s.action as ResolvedApiStep).base ?? 'default'
     } else if (s.action.__type === 'browser') {
       const bAction = s.action as { action: string; base?: string }
-      if (bAction.action === 'goto') base = bAction.base
+      if (bAction.action === 'goto') targetBase = bAction.base ?? 'default'
     }
 
-    const targetBase = base ?? 'default'
+    if (targetBase === undefined) continue
 
     if (!(targetBase in resolvedUrls)) {
       throw new Error(
