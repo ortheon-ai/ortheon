@@ -22,6 +22,7 @@ export const paymentsApi: Record<string, ApiContract> = {
   capturePayment: {
     method: 'POST',
     path: '/api/payments/{paymentId}/capture',
+    base: 'payments',               // optional: route all steps using this contract to urls['payments']
     purpose: 'Capture an authorized payment',
     request: {
       params: { paymentId: 'string' },
@@ -38,6 +39,8 @@ Contracts are:
 - **Domain-grouped** -- one file per business domain.
 - **Named by business intent** -- `capturePayment`, not `postApiPaymentsV2CaptureHandler`.
 - **Stable** -- seldom changed once defined.
+
+`base` declares which named URL from the spec's `urls` map this contract targets. Omit it to use the default (from `baseUrl`). The validator catches references to undeclared bases.
 
 Body shapes in contracts are documentation. They are not schema-validated. If path contains `{paymentId}`, the validator will require `params.paymentId` in any step that uses this contract.
 
@@ -195,9 +198,10 @@ Body field values are checked with `equals`. Use `existsCheck()` (imported from 
 
 ```ts
 step('open homepage', browser('goto', { url: '/' }))
+step('open admin', browser('goto', { url: '/dashboard', base: 'admin' }))
 ```
 
-URLs are relative to `baseUrl` unless they start with `http`.
+URLs are relative to `baseUrl` (or the named `base`) unless they start with `http`. `base` must match a key in the spec's `urls` map; omitting it uses the default URL.
 
 ### Form interaction
 
@@ -305,6 +309,42 @@ spec('checkout', {
     }),
   ],
 })
+```
+
+## Multi-URL specs
+
+When a spec tests more than one service origin, declare named URLs in the `urls` map alongside `baseUrl`:
+
+```ts
+spec('multi-service checkout', {
+  baseUrl: env('APP_URL'),          // default -- steps with no base go here
+  urls: {
+    payments: env('PAYMENTS_URL'),  // named target
+    admin: env('ADMIN_URL'),
+  },
+  apis: { ...authApi, ...paymentsApi },
+  flows: [ ... ],
+})
+```
+
+**Base resolution order** (highest wins):
+1. Step-level `base` option: `api('chargeCard', { base: 'payments', ... })`
+2. Contract-level `base` field: `chargeCard: { method: 'POST', path: '...', base: 'payments' }`
+3. Default: `baseUrl`
+
+The validator catches references to undeclared base names at compile time. Run `ortheon expand` to see which URL each step is routed to — steps using a named base show `[base: <name>]` on their action line.
+
+```
+SPEC: multi-service checkout
+BASE URL: env("APP_URL")
+URL [payments]: env("PAYMENTS_URL")
+
+STEPS (3 total):
+    1. login (flow: checkout)
+       action: POST /api/auth/login
+    2. charge card (flow: checkout)
+       action: POST /api/charge [base: payments]
+    3. ...
 ```
 
 ## Environment variables

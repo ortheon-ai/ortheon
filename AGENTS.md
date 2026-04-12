@@ -87,7 +87,7 @@ Do this on every change, no matter how small. Never skip to implementation witho
 ## Commands
 
 ```bash
-npm test                  # 191 unit tests
+npm test                  # unit tests
 npm run examples          # 3 specs against demo app (19 steps)
 npm run demo              # Start demo server at :3737
 npm run serve             # Start ortheon web server against examples/
