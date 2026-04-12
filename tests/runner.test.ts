@@ -374,6 +374,27 @@ describe('runSpec', () => {
         expect(caughtMessage).not.toMatch('No baseUrl configured')
       }
     })
+
+    it('throws a descriptive error when browser goto references an unknown base', async () => {
+      // A misspelled or missing base on a goto step must throw immediately with a clear
+      // error rather than silently falling back to the default URL.
+      // Use skipValidation so the structural validator doesn't catch it first -- this
+      // simulates the runPlan() path which always skips validation.
+      const theSpec = spec('unknown-base-goto', {
+        baseUrl: 'http://app.example.com',
+        urls: { admin: 'http://admin.example.com' },
+        flows: [
+          flow('main', {
+            steps: [step('open typo', browser('goto', { url: '/dashboard', base: 'admn' as string }))],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec, { skipValidation: true })
+      expect(result.status).toBe('fail')
+      const stepError = result.flows.flatMap(f => f.steps).find(s => s.status === 'fail')?.error ?? ''
+      expect(stepError).toMatch(/references base "admn" which is not defined/)
+    })
   })
 
   describe('validation', () => {

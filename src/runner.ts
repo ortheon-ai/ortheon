@@ -272,7 +272,25 @@ async function executeStep(
     }
     // For goto, honour the base field; all other browser actions ignore it.
     const browserBase = action.action === 'goto' ? ((action as { base?: string }).base ?? 'default') : 'default'
-    const browserBaseUrl = resolvedUrls[browserBase] ?? resolvedUrls['default'] ?? ''
+    if (!(browserBase in resolvedUrls)) {
+      throw new Error(
+        `Step "${step.name}" references base "${browserBase}" which is not defined in the spec's urls map.\n` +
+        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+      )
+    }
+    const browserBaseUrl = resolvedUrls[browserBase]!
+    if (!browserBaseUrl) {
+      if (browserBase === 'default') {
+        throw new Error(
+          'No baseUrl configured for this spec.\n' +
+          'Set the appropriate environment variable for the env() key declared in the spec.'
+        )
+      }
+      throw new Error(
+        `Step "${step.name}" references base "${browserBase}" which is not defined in the spec's urls map.\n` +
+        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+      )
+    }
     await executeBrowserStep(action, browserSession, ctx, browserBaseUrl)
 
     // Browser extract steps save their values inside executeBrowserStep
