@@ -1,4 +1,58 @@
 #!/usr/bin/env node
+
+// ---------------------------------------------------------------------------
+// Auto-detect TypeScript specs and re-exec with tsx if needed.
+// tsx cannot be registered at runtime (it requires --import at startup),
+// so we detect .ts usage early and spawn a child process with --import tsx.
+// ---------------------------------------------------------------------------
+
+// Only inspect positional arguments for .ts/.tsx extensions.
+// Flag values (e.g. URLs passed to --from) must be skipped — a URL like
+// https://specs.example.ts ends in ".ts" but is not a TypeScript file.
+const needsTsx = (() => {
+  if (process.env['__ORTHEON_TSX']) return false
+  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port'])
+  const args = process.argv.slice(2)
+  const positional: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!
+    if (a.startsWith('-')) {
+      if (flagsWithValues.has(a)) i++ // skip this flag's value
+    } else {
+      positional.push(a)
+    }
+  }
+  return positional.some(a => a.endsWith('.ts') || a.endsWith('.tsx'))
+})()
+
+if (needsTsx) {
+  const { execFileSync } = await import('node:child_process')
+  try {
+    await import('tsx' as string)
+  } catch {
+    console.error('TypeScript spec files require tsx. Install it: npm install -D tsx')
+    process.exit(1)
+  }
+  try {
+    // Preserve existing Node.js flags (--inspect, --max-old-space-size, etc.).
+    // Strip any pre-existing --import tsx / --import=tsx so tsx is not registered twice.
+    const execArgv = process.execArgv.filter((a, i, arr) => {
+      if (a === '--import=tsx') return false
+      if (a === '--import' && arr[i + 1] === 'tsx') return false
+      if (a === 'tsx' && arr[i - 1] === '--import') return false
+      return true
+    })
+    execFileSync(
+      process.execPath,
+      ['--import', 'tsx', ...execArgv, ...process.argv.slice(1)],
+      { stdio: 'inherit', env: { ...process.env, '__ORTHEON_TSX': '1' } },
+    )
+    process.exit(0)
+  } catch (err) {
+    process.exit((err as { status?: number }).status ?? 1)
+  }
+}
+
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
 import { compile, formatExpandedPlan } from './compiler.js'

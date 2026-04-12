@@ -17,6 +17,7 @@ export {
   secret,
   bearer,
   existsCheck,
+  generate,
 } from './dsl.js'
 
 // Runtime
@@ -44,6 +45,8 @@ export type {
   ExpectStep,
   UseStep,
   BearerValue,
+  GenerateKind,
+  GenerateValue,
   ExistsCheck,
   DynamicValue,
   RefValue,

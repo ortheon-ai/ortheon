@@ -8,7 +8,11 @@ export type SecretValue = { __type: 'secret'; name: string }
 // Wraps a token value and resolves to "Bearer <value>" at runtime.
 // Use this for Authorization headers instead of manual string construction.
 export type BearerValue = { __type: 'bearer'; value: DynamicValue | string }
-export type DynamicValue = RefValue | EnvValue | SecretValue | BearerValue
+// Generates a fresh value at execution time. Unlike Date.now() at module scope,
+// this marker is resolved by the runner so every run (including retries) gets a new value.
+export type GenerateKind = 'uuid' | 'timestamp' | 'unique-email'
+export type GenerateValue = { __type: 'generate'; kind: GenerateKind; options?: Record<string, string> }
+export type DynamicValue = RefValue | EnvValue | SecretValue | BearerValue | GenerateValue
 export type Resolvable<T> = T | DynamicValue
 
 // ---------------------------------------------------------------------------
