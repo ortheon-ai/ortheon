@@ -9,6 +9,7 @@ import type {
   FlowItem,
   MatcherName,
   RefValue,
+  ResolvedApiStep,
   Section,
   Spec,
   Step,
@@ -77,6 +78,23 @@ export function validateStructure(spec: Spec): ValidationResult {
   const apis = spec.apis ?? {}
   const flowNames = new Set<string>()
 
+  // Build the set of valid base names: 'default' is always valid (maps to baseUrl).
+  const validBases = new Set<string>(['default'])
+  for (const key of Object.keys(spec.urls ?? {})) {
+    validBases.add(key)
+  }
+
+  // Validate contract-level base declarations.
+  for (const [contractName, contract] of Object.entries(apis)) {
+    if (contract.base !== undefined && !validBases.has(contract.base)) {
+      errors.push({
+        severity: 'error',
+        message: `Contract "${contractName}" declares base "${contract.base}" which is not defined in the spec's urls map. ` +
+          `Available bases: ${[...validBases].join(', ')}`,
+      })
+    }
+  }
+
   // Collect all flow names: both library flows and top-level flows (needed for use() validation)
   const allFlows = [...(spec.library ?? []), ...spec.flows]
 
@@ -111,7 +129,7 @@ export function validateStructure(spec: Spec): ValidationResult {
       stepNames.add(step.name)
 
       // Validate the step action
-      validateStepAction(step, apis, flowNames, flowMap, location, errors, warnings)
+      validateStepAction(step, apis, flowNames, flowMap, location, errors, warnings, validBases)
     }
   }
 
@@ -141,7 +159,8 @@ function validateStepAction(
   flowMap: Map<string, Flow>,
   location: string,
   errors: Diagnostic[],
-  warnings: Diagnostic[]
+  warnings: Diagnostic[],
+  validBases: Set<string>
 ): void {
   const action = step.action
   const stepLocation = `${location} > step("${step.name}")`
@@ -170,11 +189,20 @@ function validateStepAction(
 
   switch (action.__type) {
     case 'browser': {
-      const bAction = action as BrowserStep & { action: string }
+      const bAction = action as BrowserStep & { action: string; base?: string }
       if (!VALID_BROWSER_ACTIONS.has(bAction.action)) {
         errors.push({
           severity: 'error',
           message: `Unknown browser action: "${bAction.action}" in ${stepLocation}`,
+          location: stepLocation,
+        })
+      }
+      // Validate base on goto steps.
+      if (bAction.action === 'goto' && bAction.base !== undefined && !validBases.has(bAction.base)) {
+        errors.push({
+          severity: 'error',
+          message: `browser("goto") declares base "${bAction.base}" which is not defined in the spec's urls map in ${stepLocation}. ` +
+            `Available bases: ${[...validBases].join(', ')}`,
           location: stepLocation,
         })
       }
@@ -211,6 +239,16 @@ function validateStepAction(
         errors.push({
           severity: 'error',
           message: `api("${target}") is not a declared contract name and does not match "METHOD /path" format in ${stepLocation}`,
+          location: stepLocation,
+        })
+      }
+
+      // Validate step-level base override.
+      if (apiAction.options.base !== undefined && !validBases.has(apiAction.options.base)) {
+        errors.push({
+          severity: 'error',
+          message: `api("${target}") declares base "${apiAction.options.base}" which is not defined in the spec's urls map in ${stepLocation}. ` +
+            `Available bases: ${[...validBases].join(', ')}`,
           location: stepLocation,
         })
       }
@@ -308,6 +346,9 @@ export function validateExpandedPlan(plan: ExecutionPlan): ValidationResult {
   const errors: Diagnostic[] = []
   const warnings: Diagnostic[] = []
 
+  // Build valid base set from the plan's urls map (may be absent on legacy plans).
+  const validPlanBases = new Set<string>(Object.keys(plan.urls ?? {}))
+
   // Check for duplicate step names across the entire expanded plan (catches double use() expansion)
   const allStepNames = new Set<string>()
   for (const step of plan.steps) {
@@ -333,6 +374,19 @@ export function validateExpandedPlan(plan: ExecutionPlan): ValidationResult {
 
     // Check all refs used in this step reference previously saved values
     checkRefsInStep(step, savedNames, location, errors)
+
+    // Check base references in expanded API steps.
+    if (step.action.__type === 'api') {
+      const apiAction = step.action as ResolvedApiStep
+      if (apiAction.base !== undefined && !validPlanBases.has(apiAction.base)) {
+        errors.push({
+          severity: 'error',
+          message: `Step "${step.name}" references base "${apiAction.base}" which is not in the plan's urls map. ` +
+            `Available bases: ${[...validPlanBases].join(', ')}`,
+          location,
+        })
+      }
+    }
 
     // Check path params
     if (step.action.__type === 'api') {

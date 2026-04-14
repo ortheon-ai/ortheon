@@ -258,6 +258,49 @@ describe('expanded plan golden tests', () => {
     })
   })
 
+  describe('multi-URL base annotation', () => {
+    it('shows [base: <name>] on API and browser goto steps that target a named URL', () => {
+      const s = spec('multi-url spec', {
+        baseUrl: 'http://app.local',
+        urls: { payments: 'http://pay.local', admin: 'http://admin.local' },
+        apis: {
+          login:      { method: 'POST', path: '/api/auth/login' },
+          chargeCard: { method: 'POST', path: '/api/charge', base: 'payments' },
+        },
+        flows: [
+          flow('checkout', {
+            steps: [
+              step('login',        api('login', {})),
+              step('charge',       api('chargeCard', {})),
+              step('open app',     browser('goto', { url: '/' })),
+              step('open admin',   browser('goto', { url: '/dashboard', base: 'admin' })),
+            ],
+          }),
+        ],
+      })
+
+      const plan = compile(s)
+      const output = formatExpandedPlan(plan)
+
+      expect(output).toMatchInlineSnapshot(`
+        "SPEC: multi-url spec
+        BASE URL: http://app.local
+        URL [payments]: http://pay.local
+        URL [admin]: http://admin.local
+
+        STEPS (4 total):
+            1. login (flow: checkout)
+               action: POST /api/auth/login
+            2. charge (flow: checkout)
+               action: POST /api/charge [base: payments]
+            3. open app (flow: checkout)
+               action: browser(goto, "/")
+            4. open admin (flow: checkout)
+               action: browser(goto, "/dashboard") [base: admin]"
+      `)
+    })
+  })
+
   describe('save and retry metadata', () => {
     it('preserves save paths and retry counts in expanded plan', () => {
       const s = spec('metadata spec', {

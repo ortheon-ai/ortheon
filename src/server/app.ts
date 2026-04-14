@@ -240,11 +240,15 @@ export function createApp(suites: ServerSuite[]): express.Application {
 
     const validation = validate(suite.spec, plan);
 
-    const rawBaseUrl = plan.baseUrl;
-    const baseUrlStr =
-      typeof rawBaseUrl === "string"
-        ? rawBaseUrl || null
-        : `${(rawBaseUrl as { __type: string; name?: string }).__type}("${(rawBaseUrl as { name?: string }).name ?? ""}")`;
+    const urlsDisplay: Record<string, string | null> = {};
+    for (const [key, val] of Object.entries(plan.urls)) {
+      urlsDisplay[key] =
+        typeof val === "string"
+          ? val || null
+          : `${(val as { __type: string; name?: string }).__type}("${(val as { name?: string }).name ?? ""}")`;
+    }
+    // Derive baseUrl display from urls['default'] so an explicit urls['default'] override is reflected.
+    const baseUrlStr = urlsDisplay["default"] ?? null;
 
     const steps = plan.steps.map((s) => ({
       name: s.name,
@@ -263,6 +267,7 @@ export function createApp(suites: ServerSuite[]): express.Application {
     res.json({
       specName: plan.specName,
       baseUrl: baseUrlStr,
+      urls: urlsDisplay,
       steps,
       flowRanges: plan.flowRanges.map((r) => ({
         name: r.name,

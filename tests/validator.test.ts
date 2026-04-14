@@ -259,6 +259,7 @@ describe('validateExpandedPlan (pass 2)', () => {
       const badPlan: ExecutionPlan = {
         specName: 'test',
         baseUrl: 'http://localhost',
+        urls: { default: 'http://localhost' },
         apis: {},
         data: {},
         steps: [
@@ -275,6 +276,7 @@ describe('validateExpandedPlan (pass 2)', () => {
             expects: [],
           },
         ],
+        flowRanges: [],
       }
       const result = validateExpandedPlan(badPlan)
       expect(result.errors.some(e => e.message.includes('orderId'))).toBe(true)
@@ -286,6 +288,7 @@ describe('validateExpandedPlan (pass 2)', () => {
       const badPlan: ExecutionPlan = {
         specName: 'test',
         baseUrl: 'http://localhost',
+        urls: { default: 'http://localhost' },
         apis: {},
         data: {},
         steps: [
@@ -302,9 +305,83 @@ describe('validateExpandedPlan (pass 2)', () => {
             expects: [],
           },
         ],
+        flowRanges: [],
       }
       const result = validateExpandedPlan(badPlan)
       expect(result.errors.some(e => e.message.includes('orderId'))).toBe(true)
+    })
+  })
+})
+
+describe('named URLs (multi-URL validation)', () => {
+  describe('validateStructure', () => {
+    it('passes when api step base matches a declared url key', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        urls: { payments: 'http://payments.example.com' },
+        apis: { charge: { method: 'POST', path: '/api/charge' } },
+        flows: [
+          flow('main', { steps: [step('charge', api('charge', { base: 'payments' }))] }),
+        ],
+      })
+      expect(validateStructure(s).errors).toHaveLength(0)
+    })
+
+    it('reports error when api step base is not in urls map', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        apis: { charge: { method: 'POST', path: '/api/charge' } },
+        flows: [
+          flow('main', { steps: [step('charge', api('charge', { base: 'payments' }))] }),
+        ],
+      })
+      const result = validateStructure(s)
+      expect(result.errors.some(e => e.message.includes('"payments"'))).toBe(true)
+    })
+
+    it('reports error when contract base is not in urls map', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        apis: { charge: { method: 'POST', path: '/api/charge', base: 'payments' } },
+        flows: [
+          flow('main', { steps: [step('charge', api('charge', {}))] }),
+        ],
+      })
+      const result = validateStructure(s)
+      expect(result.errors.some(e => e.message.includes('"payments"') && e.message.includes('Contract'))).toBe(true)
+    })
+
+    it('passes for browser goto with valid base', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        urls: { admin: 'http://admin.example.com' },
+        flows: [
+          flow('main', { steps: [step('open admin', browser('goto', { url: '/dashboard', base: 'admin' }))] }),
+        ],
+      })
+      expect(validateStructure(s).errors).toHaveLength(0)
+    })
+
+    it('reports error when browser goto base is not in urls map', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        flows: [
+          flow('main', { steps: [step('open admin', browser('goto', { url: '/dashboard', base: 'admin' }))] }),
+        ],
+      })
+      const result = validateStructure(s)
+      expect(result.errors.some(e => e.message.includes('"admin"'))).toBe(true)
+    })
+
+    it('accepts "default" as a valid base without explicit urls declaration', () => {
+      const s = spec('test', {
+        baseUrl: 'http://app.example.com',
+        apis: { health: { method: 'GET', path: '/api/health' } },
+        flows: [
+          flow('main', { steps: [step('check', api('health', { base: 'default' }))] }),
+        ],
+      })
+      expect(validateStructure(s).errors).toHaveLength(0)
     })
   })
 })

@@ -329,17 +329,20 @@ This is a **normalized operational view**, not a second language. Specs are the 
 ```
 SPEC: authenticated checkout
 BASE URL: env("MY_APP_URL")
+URL [payments]: env("PAYMENTS_URL")
 
 STEPS (11 total):
     1. [api authentication] acquire api token (flow: checkout)
        action: POST /api/auth/login
        save:   {"token":"body.token"}
-    2. [browser authentication] browser login > open login page (flow: login)
+    2. [payment] charge card (flow: checkout)
+       action: POST /api/charge [base: payments]
+    3. [browser authentication] browser login > open login page (flow: login)
        action: browser(goto, "/login")
-    3. [browser authentication] browser login > fill email (flow: login)
-       action: browser(type, "[data-testid=email]")
    ...
 ```
+
+Named URL entries appear after `BASE URL`. Steps routed to a named URL show `[base: <name>]` on their action line. Steps using the default URL show nothing extra.
 
 ### `ortheon serve <glob>`
 
@@ -398,7 +401,16 @@ All under `/api`. Suite IDs are base64url-encoded relative file paths.
 ```json
 {
   "planVersion": 1,
-  "plan": { "specName": "...", "baseUrl": { "__type": "env", "name": "MY_APP_URL" }, "steps": [...], ... },
+  "plan": {
+    "specName": "...",
+    "baseUrl": { "__type": "env", "name": "MY_APP_URL" },
+    "urls": {
+      "default": { "__type": "env", "name": "MY_APP_URL" },
+      "payments": { "__type": "env", "name": "PAYMENTS_URL" }
+    },
+    "steps": [...],
+    ...
+  },
   "validation": { "errors": [], "warnings": [] },
   "expectedOutcome": "pass",
   "tags": [],
@@ -457,7 +469,7 @@ ortheon list --from http://localhost:4000
 
 | Action    | Options                                              | Playwright equivalent                      |
 | --------- | ---------------------------------------------------- | ------------------------------------------ |
-| `goto`    | `{ url }`                                            | `page.goto(url)`                           |
+| `goto`    | `{ url, base? }`                                     | `page.goto(url)`                           |
 | `click`   | `{ target }`                                         | `page.locator(target).click()`             |
 | `type`    | `{ target, value }`                                  | `page.locator(target).fill(value)`         |
 | `press`   | `{ target, key }`                                    | `page.locator(target).press(key)`          |
@@ -485,23 +497,64 @@ Five only. No matcher jungle.
 
 ```ts
 api("createOrder", {
-  params: { orderId: ref("orderId") }, // path params: /orders/{orderId}
-  query: { page: "1" }, // query string
+  base: "payments",                            // target a named URL (overrides contract base)
+  params: { orderId: ref("orderId") },         // path params: /orders/{orderId}
+  query: { page: "1" },                        // query string
   headers: { Authorization: bearer(ref("token")) }, // request headers -- use bearer() for tokens
-  body: { sku: "sku_123", quantity: 1 }, // request body (JSON)
+  body: { sku: "sku_123", quantity: 1 },       // request body (JSON)
   expect: {
-    status: 201, // assert status code
+    status: 201,                               // assert status code
     body: {
-      status: "confirmed", // assert body.status equals 'confirmed'
-      id: existsCheck(), // assert body.id is non-null
+      status: "confirmed",                     // assert body.status equals 'confirmed'
+      id: existsCheck(),                       // assert body.id is non-null
     },
   },
   save: {
-    orderId: "body.id", // save response body field
-    order: "body", // save entire body
+    orderId: "body.id",                        // save response body field
+    order: "body",                             // save entire body
   },
 });
 ```
+
+### Multi-URL specs
+
+When your spec tests multiple services at different origins, use the `urls` map:
+
+```ts
+spec('multi-service checkout', {
+  baseUrl: env('APP_URL'),          // default -- all steps with no base declared go here
+  urls: {
+    payments: env('PAYMENTS_URL'),  // named target for the payments service
+    admin: env('ADMIN_URL'),        // named target for the admin service
+  },
+  apis: { ...authApi, ...paymentsApi },
+  flows: [ ... ],
+})
+```
+
+Contracts declare which base they target with `base`:
+
+```ts
+export const paymentsApi: Record<string, ApiContract> = {
+  chargeCard: {
+    method: 'POST',
+    path: '/api/charge',
+    base: 'payments',               // all steps using this contract route to PAYMENTS_URL
+  },
+}
+```
+
+Steps can override the base at the call site (step wins over contract):
+
+```ts
+step('charge', api('chargeCard', { ... }))                     // → PAYMENTS_URL (from contract)
+step('override', api('chargeCard', { base: 'admin', ... }))    // → ADMIN_URL (step wins)
+step('open admin', browser('goto', { url: '/dashboard', base: 'admin' })) // → ADMIN_URL
+```
+
+**Resolution order**: step `base` > contract `base` > `'default'` (from `baseUrl`)
+
+The validator catches `base` references that don't exist in the `urls` map at compile time.
 
 ### `ref` path syntax
 
@@ -520,7 +573,10 @@ No wildcards. No filters. No JSONPath. No recursive descent.
 
 ```ts
 spec('name', {
-  baseUrl: env('MY_APP_URL'),                  // required
+  baseUrl: env('MY_APP_URL'),                  // default URL for steps with no base declared
+  urls: {                                      // named URLs for multi-service specs
+    payments: env('PAYMENTS_URL'),             // any api/browser step can target 'payments'
+  },
   apis: { ...ordersApi, ...paymentsApi },      // shared contract catalogs
   data: { user: users.standardBuyer },         // data catalog bindings
   tags: ['checkout', 'critical'],              // metadata
@@ -668,7 +724,7 @@ cd ortheon
 npm install
 npx playwright install chromium
 
-npm test                    # 191 unit tests (vitest)
+npm test                    # unit tests (vitest)
 npm run examples            # 3 specs against demo app (19 steps)
 npm run dev                 # demo server (:3737) + ortheon web server (:4000), ctrl+c kills both
 npm run demo                # start demo server at :3737 only

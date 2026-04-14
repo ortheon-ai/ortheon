@@ -157,7 +157,10 @@ function expandStep(
 
   if (action.__type === 'api') {
     const apiAction = action as ApiStep
+    const contract = apis[apiAction.target]
     const { method, path } = resolveApiTarget(apiAction.target, apis)
+    // Step-level base wins over contract-level base.
+    const base = apiAction.options.base ?? contract?.base
 
     const executableStep: ExecutableStep = {
       name: effectiveName,
@@ -167,6 +170,7 @@ function expandStep(
         __type: 'api',
         method,
         path,
+        ...(base !== undefined ? { base } : {}),
         options: apiAction.options,
       },
       retries: substitutedStep.retries ?? 0,
@@ -275,9 +279,19 @@ export function compile(spec: Spec): ExecutionPlan {
     flowRanges.push({ name: flow.name, startIndex, stepCount: flowSteps.length })
   }
 
+  // Build the unified urls map. baseUrl is the 'default' entry; spec.urls adds named entries.
+  // Explicit urls['default'] (if provided) overrides the baseUrl-derived default.
+  const urls: Record<string, Resolvable<string>> = {
+    default: spec.baseUrl ?? '',
+    ...(spec.urls ?? {}),
+  }
+
   return {
     specName: spec.name,
-    baseUrl: spec.baseUrl ?? '',
+    // Mirror urls['default'] so that an explicit urls['default'] override is reflected here too.
+    // Non-null assertion: 'default' is always set in the literal above the spread.
+    baseUrl: urls['default']!,
+    urls,
     apis,
     data,
     steps: allSteps,
@@ -292,11 +306,17 @@ export function compile(spec: Spec): ExecutionPlan {
 export function formatExpandedPlan(plan: ExecutionPlan): string {
   const lines: string[] = []
   lines.push(`SPEC: ${plan.specName}`)
-  if (plan.baseUrl) {
-    const baseUrlStr = typeof plan.baseUrl === 'string'
-      ? plan.baseUrl
-      : `${(plan.baseUrl as { __type: string; name?: string }).__type}("${(plan.baseUrl as { name?: string }).name ?? ''}")`
-    lines.push(`BASE URL: ${baseUrlStr}`)
+  for (const [key, val] of Object.entries(plan.urls)) {
+    // Skip empty-string placeholders (spec with no baseUrl / unconfigured entry)
+    if (typeof val === 'string' && !val) continue
+    const valStr = typeof val === 'string'
+      ? val
+      : `${(val as { __type: string; name?: string }).__type}("${(val as { name?: string }).name ?? ''}")`
+    if (key === 'default') {
+      lines.push(`BASE URL: ${valStr}`)
+    } else {
+      lines.push(`URL [${key}]: ${valStr}`)
+    }
   }
   lines.push('')
   lines.push(`STEPS (${plan.steps.length} total):`)
@@ -339,12 +359,14 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
 
 function formatAction(action: ExecutableStep['action']): string {
   if (action.__type === 'api') {
-    return `${action.method} ${action.path}`
+    const baseSuffix = action.base ? ` [base: ${action.base}]` : ''
+    return `${action.method} ${action.path}${baseSuffix}`
   }
   if (action.__type === 'browser') {
-    const bAction = action as BrowserStep & { action: string; target?: unknown; url?: unknown }
+    const bAction = action as BrowserStep & { action: string; target?: unknown; url?: unknown; base?: string }
     const target = bAction.target ?? bAction.url ?? ''
-    return `browser(${bAction.action}, ${JSON.stringify(target)})`
+    const baseSuffix = bAction.action === 'goto' && bAction.base ? ` [base: ${bAction.base}]` : ''
+    return `browser(${bAction.action}, ${JSON.stringify(target)})${baseSuffix}`
   }
   if (action.__type === 'expect') {
     return `expect(...)`

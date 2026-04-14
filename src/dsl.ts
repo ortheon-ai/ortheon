@@ -82,7 +82,7 @@ export function generate(kind: GenerateKind, options?: Record<string, string>): 
 // Browser action builder
 // ---------------------------------------------------------------------------
 
-export function browser(action: 'goto', options: { url: Resolvable<string> }): BrowserStep
+export function browser(action: 'goto', options: { url: Resolvable<string>; base?: string }): BrowserStep
 export function browser(action: 'click', options: { target: Resolvable<string> }): BrowserStep
 export function browser(action: 'type', options: { target: Resolvable<string>; value: Resolvable<string> }): BrowserStep
 export function browser(action: 'press', options: { target: Resolvable<string>; key: string }): BrowserStep
@@ -161,6 +161,8 @@ export function flow(name: string, config: FlowConfig): Flow {
 
 export type SpecConfig = {
   baseUrl?: Resolvable<string>
+  // Named URL targets keyed by logical name. 'default' is reserved for baseUrl.
+  urls?: Record<string, Resolvable<string>>
   apis?: Record<string, ApiContract>
   data?: Record<string, unknown>
   tags?: string[]
@@ -175,6 +177,7 @@ export function spec(name: string, config: SpecConfig): Spec {
   return {
     name,
     ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+    ...(config.urls ? { urls: config.urls } : {}),
     ...(config.apis ? { apis: config.apis } : {}),
     ...(config.data ? { data: config.data } : {}),
     ...(config.tags ? { tags: config.tags } : {}),

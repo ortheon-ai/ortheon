@@ -4,7 +4,7 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { runSpec, runPlan } from '../src/runner.js'
 import { compile } from '../src/compiler.js'
-import { spec, flow, step, api, expect as orth_expect, ref, env } from '../src/dsl.js'
+import { spec, flow, step, api, browser, expect as orth_expect, ref, env } from '../src/dsl.js'
 import type { ExecutionPlan } from '../src/types.js'
 
 // ---------------------------------------------------------------------------
@@ -334,6 +334,85 @@ describe('runSpec', () => {
       })
 
       await expect(runSpec(theSpec)).rejects.toThrow('No baseUrl')
+    })
+
+    it('throws "No baseUrl configured" for a browser goto step with no baseUrl', async () => {
+      // A spec with no baseUrl but a browser goto step using the default base should
+      // throw the clear "No baseUrl configured" error early, not a confusing Playwright error.
+      const theSpec = spec('no-url-browser', {
+        flows: [
+          flow('main', {
+            steps: [step('open page', browser('goto', { url: '/home' }))],
+          }),
+        ],
+      })
+
+      await expect(runSpec(theSpec)).rejects.toThrow('No baseUrl')
+    })
+
+    it('does NOT throw "No baseUrl configured" for browser goto when a named base is used', async () => {
+      // A spec with no baseUrl but a goto that targets a named base is valid at plan level;
+      // assertDefaultUrlIfNeeded should not fire. Any failure is at execution time (e.g.
+      // "no browser session"), not the early "No baseUrl configured" message.
+      const theSpec = spec('no-default-url', {
+        urls: { admin: 'http://admin.example.com' },
+        flows: [
+          flow('main', {
+            steps: [step('open admin', browser('goto', { url: '/dashboard', base: 'admin' }))],
+          }),
+        ],
+      })
+
+      let caughtMessage: string | undefined
+      try {
+        await runSpec(theSpec)
+      } catch (e) {
+        caughtMessage = (e as Error).message
+      }
+      // Either no throw, or a different error (e.g. "no browser session") -- never the early baseUrl check.
+      if (caughtMessage !== undefined) {
+        expect(caughtMessage).not.toMatch('No baseUrl configured')
+      }
+    })
+
+    it('throws when a named URL env var is set to an empty string', async () => {
+      process.env['EMPTY_PAYMENTS_URL'] = ''
+      try {
+        const theSpec = spec('empty-named-url', {
+          baseUrl: 'http://app.example.com',
+          urls: { payments: env('EMPTY_PAYMENTS_URL') },
+          apis: {
+            charge: { method: 'POST', path: '/api/charge', base: 'payments' },
+          },
+          flows: [
+            flow('main', {
+              steps: [step('charge', api('charge', { expect: { status: 201 } }))],
+            }),
+          ],
+        })
+
+        await expect(runSpec(theSpec)).rejects.toThrow(/EMPTY_PAYMENTS_URL.*is set but empty/s)
+      } finally {
+        delete process.env['EMPTY_PAYMENTS_URL']
+      }
+    })
+
+    it('throws a descriptive error when browser goto references an unknown base', async () => {
+      // A misspelled or missing base on a goto step must throw immediately with a clear
+      // error rather than silently falling back to the default URL.
+      // Use skipValidation so the structural validator doesn't catch it first -- this
+      // simulates the runPlan() path which always skips validation.
+      const theSpec = spec('unknown-base-goto', {
+        baseUrl: 'http://app.example.com',
+        urls: { admin: 'http://admin.example.com' },
+        flows: [
+          flow('main', {
+            steps: [step('open typo', browser('goto', { url: '/dashboard', base: 'admn' as string }))],
+          }),
+        ],
+      })
+
+      await expect(runSpec(theSpec, { skipValidation: true })).rejects.toThrow(/references base "admn" which is not defined/)
     })
   })
 
@@ -687,6 +766,79 @@ describe('runPlan', () => {
     expect(result.status).toBe('pass')
   })
 
+  it('routes steps to named URLs from the urls map', async () => {
+    // Two separate servers simulating 'app' and 'payments' services
+    const { server: appServer, url: appUrl } = await startTestServer({
+      'GET /api/health': { status: 200, body: { ok: true } },
+    })
+    const { server: paymentsServer, url: paymentsUrl } = await startTestServer({
+      'POST /api/charge': { status: 201, body: { charged: true } },
+    })
+    server = appServer
+    const servers = [appServer, paymentsServer]
+
+    try {
+      const theSpec = spec('multi-url', {
+        baseUrl: appUrl,
+        urls: { payments: paymentsUrl },
+        apis: {
+          health: { method: 'GET', path: '/api/health' },
+          charge: { method: 'POST', path: '/api/charge', base: 'payments' },
+        },
+        flows: [
+          flow('main', {
+            steps: [
+              step('health check', api('health', { expect: { status: 200 } })),
+              step('charge', api('charge', { expect: { status: 201 } })),
+            ],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec)
+      expect(result.status).toBe('pass')
+      expect(result.passedSteps).toBe(2)
+    } finally {
+      servers.forEach(s => s.close())
+      server = null
+    }
+  })
+
+  it('allows step-level base to override contract-level base at runtime', async () => {
+    const { server: s1, url: url1 } = await startTestServer({
+      'POST /api/charge': { status: 201, body: { charged: true } },
+    })
+    const { server: s2, url: url2 } = await startTestServer({
+      'POST /api/charge': { status: 200, body: { charged: true } },
+    })
+    server = s1
+    const servers = [s1, s2]
+
+    try {
+      const theSpec = spec('override-base', {
+        baseUrl: 'http://unused.example.com',
+        urls: { a: url1, b: url2 },
+        apis: {
+          charge: { method: 'POST', path: '/api/charge', base: 'a' },
+        },
+        flows: [
+          flow('main', {
+            steps: [
+              // Override contract base 'a' with 'b' at call site
+              step('charge via b', api('charge', { base: 'b', expect: { status: 200 } })),
+            ],
+          }),
+        ],
+      })
+
+      const result = await runSpec(theSpec)
+      expect(result.status).toBe('pass')
+    } finally {
+      servers.forEach(s => s.close())
+      server = null
+    }
+  })
+
   it('accepts a plain ExecutionPlan object without going through compile()', async () => {
     const { server: s, url } = await startTestServer({
       'GET /api/raw': { status: 200, body: { ok: true } },
@@ -697,6 +849,7 @@ describe('runPlan', () => {
     const rawPlan: ExecutionPlan = {
       specName: 'raw-plan',
       baseUrl: url,
+      urls: { default: url },
       apis: {},
       data: {},
       steps: [

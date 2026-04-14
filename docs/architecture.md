@@ -82,7 +82,9 @@ Transforms a `Spec` AST into an `ExecutionPlan` -- a flat, ordered list of execu
 
 4. **Flatten sections** -- collapses sections into the parent step list, preserving the section name as metadata on each step.
 
-5. **Emit `ExecutionPlan`** -- the `baseUrl` stays as `Resolvable<string>` (may be an unresolved `env()` value). The runner resolves it at execution time. The plan also includes `flowRanges: FlowRange[]` -- one entry per top-level flow, recording the flow name, the index of its first step in the flat step list, and its step count. This allows the runner to reconstruct per-flow result grouping without re-parsing the AST.
+5. **Emit `ExecutionPlan`** -- `baseUrl` stays as `Resolvable<string>` (may be an unresolved `env()` value). The plan also carries a `urls` map that merges `spec.baseUrl` (as `'default'`) with any named entries from `spec.urls`. Both stay unresolved — the runner resolves them at execution time from the caller's environment. The plan also includes `flowRanges: FlowRange[]` -- one entry per top-level flow, recording the flow name, the index of its first step in the flat step list, and its step count. This allows the runner to reconstruct per-flow result grouping without re-parsing the AST.
+
+   For API and browser-goto steps, the compiler propagates the `base` field from the step options (highest priority) or the contract definition, attaching it to the `ResolvedApiStep` in the flat step list. Steps with no `base` implicitly use `'default'`.
 
 ```ts
 FlowRange = { name: string; startIndex: number; stepCount: number }
@@ -107,6 +109,7 @@ Two-pass validation, split to avoid the "two almost-compilers" problem.
 - Save path syntax validity
 - `retries` must be a non-negative integer when present
 - `retryIntervalMs` must be a non-negative finite number when present
+- Contract `base` and step-level `base` references exist in `spec.urls` (or equal `'default'`)
 
 **Pass 2: Expanded-plan (on compiled `ExecutionPlan`)**
 
@@ -114,6 +117,7 @@ Two-pass validation, split to avoid the "two almost-compilers" problem.
 - Save ordering: a ref does not precede the step that saves it
 - Path params in contract paths (`{orderId}`) have corresponding `params` entries
 - Step names are unique across the entire expanded plan (catches ambiguous double-use of the same flow)
+- `ResolvedApiStep.base` references exist in `plan.urls`
 
 Contract body shapes are **documentary only** -- not validated. This avoids accidentally building "OpenAPI but smaller and sadder."
 
@@ -125,7 +129,7 @@ The main `runSpec()` function:
 
 1. Compiles the spec into an `ExecutionPlan`
 2. Validates (both passes)
-3. Resolves `baseUrl` (CLI override > spec config > env var)
+3. Resolves the full `urls` map (each entry: CLI override for `'default'` > spec config > env var). Named entries that reference an unset env var throw immediately. A literal empty `'default'` is deferred: if any step needs the default URL and it is empty, the runner throws before execution begins.
 4. Loads `spec.data` into context
 5. Launches browser (lazily, only if any step needs it)
 6. Walks steps sequentially:
@@ -243,7 +247,17 @@ The server never sees the user's environment variables or secrets. The CLI resol
 ```json
 {
   "planVersion": 1,
-  "plan": { "specName": "...", "baseUrl": { "__type": "env", "name": "MY_APP_URL" }, "steps": [...], "flowRanges": [...], ... },
+  "plan": {
+    "specName": "...",
+    "baseUrl": { "__type": "env", "name": "MY_APP_URL" },
+    "urls": {
+      "default": { "__type": "env", "name": "MY_APP_URL" },
+      "payments": { "__type": "env", "name": "PAYMENTS_URL" }
+    },
+    "steps": [...],
+    "flowRanges": [...],
+    ...
+  },
   "validation": { "errors": [], "warnings": [] },
   "expectedOutcome": "pass",
   "tags": [],
