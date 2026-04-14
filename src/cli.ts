@@ -11,13 +11,18 @@
 // https://specs.example.ts ends in ".ts" but is not a TypeScript file.
 const needsTsx = (() => {
   if (process.env['__ORTHEON_TSX']) return false
-  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--tag'])
+  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port'])
+  const variadicFlags = new Set(['--tag'])
   const args = process.argv.slice(2)
   const positional: string[] = []
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!
     if (a.startsWith('-')) {
-      if (flagsWithValues.has(a)) i++ // skip this flag's value
+      if (variadicFlags.has(a)) {
+        while (i + 1 < args.length && !args[i + 1]!.startsWith('-')) i++
+      } else if (flagsWithValues.has(a)) {
+        i++
+      }
     } else {
       positional.push(a)
     }
