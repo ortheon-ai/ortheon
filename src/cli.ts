@@ -112,7 +112,7 @@ program
         console.error('         ortheon run --from <url> --suite <id>')
         process.exit(1)
       }
-      await runLocal(glob, { ...options, ...(options.tag ? { tag: options.tag } : {}) })
+      await runLocal(glob, options)
     }
   })
 
