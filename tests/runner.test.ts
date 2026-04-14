@@ -375,6 +375,28 @@ describe('runSpec', () => {
       }
     })
 
+    it('throws when a named URL env var is set to an empty string', async () => {
+      process.env['EMPTY_PAYMENTS_URL'] = ''
+      try {
+        const theSpec = spec('empty-named-url', {
+          baseUrl: 'http://app.example.com',
+          urls: { payments: env('EMPTY_PAYMENTS_URL') },
+          apis: {
+            charge: { method: 'POST', path: '/api/charge', base: 'payments' },
+          },
+          flows: [
+            flow('main', {
+              steps: [step('charge', api('charge', { expect: { status: 201 } }))],
+            }),
+          ],
+        })
+
+        await expect(runSpec(theSpec)).rejects.toThrow(/EMPTY_PAYMENTS_URL.*is set but empty/s)
+      } finally {
+        delete process.env['EMPTY_PAYMENTS_URL']
+      }
+    })
+
     it('throws a descriptive error when browser goto references an unknown base', async () => {
       // A misspelled or missing base on a goto step must throw immediately with a clear
       // error rather than silently falling back to the default URL.

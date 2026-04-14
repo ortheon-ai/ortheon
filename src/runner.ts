@@ -214,6 +214,12 @@ async function executeStep(
     const apiAction = action as ResolvedApiStep
     const targetBase = apiAction.base ?? 'default'
     const stepBaseUrl = resolvedUrls[targetBase]
+    if (stepBaseUrl === undefined) {
+      throw new Error(
+        `Step "${step.name}" references base "${targetBase}" which is not defined in the spec's urls map.\n` +
+        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+      )
+    }
     if (!stepBaseUrl) {
       if (targetBase === 'default') {
         throw new Error(
@@ -222,8 +228,8 @@ async function executeStep(
         )
       }
       throw new Error(
-        `Step "${step.name}" references base "${targetBase}" which is not defined in the spec's urls map.\n` +
-        `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+        `Step "${step.name}" targets base "${targetBase}" but the URL is empty.\n` +
+        'Set the appropriate environment variable for the env() key declared in the spec.'
       )
     }
     const response = await executeApiCall(
@@ -289,8 +295,8 @@ async function executeStep(
           )
         }
         throw new Error(
-          `Step "${step.name}" references base "${browserBase}" which is not defined in the spec's urls map.\n` +
-          `Available bases: ${Object.keys(resolvedUrls).join(', ')}`
+          `Step "${step.name}" targets base "${browserBase}" but the URL is empty.\n` +
+          'Set the appropriate environment variable for the env() key declared in the spec.'
         )
       }
     }
@@ -331,11 +337,12 @@ function resolveUrlEntry(key: string, value: import('./types.js').Resolvable<str
     const dynamic = value as { __type: string; name?: string }
     if (dynamic.__type === 'env' && dynamic.name) {
       const val = process.env[dynamic.name]
-      if (val !== undefined) return val
+      if (val !== undefined && val !== '') return val
       const label = key === 'default' ? 'baseUrl' : `urls["${key}"]`
+      const reason = val === '' ? 'is set but empty' : 'is not set'
       throw new Error(
         `No URL configured for "${specName}" (${label}): ` +
-        `env variable "${dynamic.name}" is not set.\n` +
+        `env variable "${dynamic.name}" ${reason}.\n` +
         `Set ${dynamic.name} in your environment and try again.`
       )
     }
@@ -394,9 +401,15 @@ function assertDefaultUrlIfNeeded(plan: ExecutionPlan, resolvedUrls: Record<stri
       )
     }
 
-    if (!resolvedUrls[targetBase] && targetBase === 'default') {
+    if (!resolvedUrls[targetBase]) {
+      if (targetBase === 'default') {
+        throw new Error(
+          `No baseUrl configured for "${plan.specName}".\n` +
+          'Set the appropriate environment variable for the env() key declared in the spec.'
+        )
+      }
       throw new Error(
-        `No baseUrl configured for "${plan.specName}".\n` +
+        `Step "${s.name}" targets base "${targetBase}" but the URL is empty.\n` +
         'Set the appropriate environment variable for the env() key declared in the spec.'
       )
     }
