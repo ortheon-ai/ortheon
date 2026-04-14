@@ -274,7 +274,7 @@ async function runLocal(
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
-        console.log(`\nRetrying "${spec.name}" (attempt ${attempt}/${maxAttempts})...`)
+        console.error(`\nRetrying "${spec.name}" (attempt ${attempt}/${maxAttempts})...`)
       }
 
       try {
