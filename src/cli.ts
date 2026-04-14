@@ -250,7 +250,12 @@ async function runLocal(
     process.exit(1)
   }
 
-  const maxAttempts = Math.max(1, parseInt(options.retries, 10) + 1)
+  const retriesParsed = parseInt(options.retries, 10)
+  if (isNaN(retriesParsed) || retriesParsed < 0) {
+    console.error(`Invalid --retries value: "${options.retries}". Must be a non-negative integer.`)
+    process.exit(1)
+  }
+  const maxAttempts = retriesParsed + 1
   const results: SpecResult[] = []
   let anyFailed = false
 
