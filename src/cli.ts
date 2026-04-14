@@ -279,12 +279,6 @@ async function runLocal(
           timeoutMs: parseInt(options.timeout, 10),
         })
 
-        if (options.reporter === 'json') {
-          jsonReport(result)
-        } else {
-          consoleReport(result)
-        }
-
         lastResult = result
         specFailed = result.status === 'fail'
 
@@ -296,7 +290,14 @@ async function runLocal(
       }
     }
 
-    if (lastResult) results.push(lastResult)
+    if (lastResult) {
+      if (options.reporter === 'json') {
+        jsonReport(lastResult)
+      } else {
+        consoleReport(lastResult)
+      }
+      results.push(lastResult)
+    }
     if (specFailed) anyFailed = true
   }
 
