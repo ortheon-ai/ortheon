@@ -11,7 +11,7 @@
 // https://specs.example.ts ends in ".ts" but is not a TypeScript file.
 const needsTsx = (() => {
   if (process.env['__ORTHEON_TSX']) return false
-  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port'])
+  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--retries'])
   const variadicFlags = new Set(['--tag'])
   const args = process.argv.slice(2)
   const positional: string[] = []
@@ -94,6 +94,7 @@ program
   .option('--timeout <ms>', 'Default step timeout in milliseconds', '30000')
   .option('--skip-validation', 'Skip pre-run validation (local mode only)')
   .option('--tag <tag...>', 'Only run specs whose tags include at least one of these values (local mode only)')
+  .option('--retries <n>', 'Number of times to retry a failed spec before marking it as failed (default: 0)', '0')
   .action(async (glob: string | undefined, options: {
     from?: string
     suite?: string
@@ -102,6 +103,7 @@ program
     timeout: string
     skipValidation?: boolean
     tag?: string[]
+    retries: string
   }) => {
     if (options.from !== undefined) {
       await runRemote(options.from, options.suite, options)
@@ -239,7 +241,7 @@ program
 
 async function runLocal(
   glob: string,
-  options: { reporter: string; headed?: boolean; timeout: string; skipValidation?: boolean; tag?: string[] },
+  options: { reporter: string; headed?: boolean; timeout: string; skipValidation?: boolean; tag?: string[]; retries: string },
 ): Promise<void> {
   const files = await resolveGlob(glob)
 
@@ -248,6 +250,7 @@ async function runLocal(
     process.exit(1)
   }
 
+  const maxAttempts = Math.max(1, parseInt(options.retries, 10) + 1)
   const results: SpecResult[] = []
   let anyFailed = false
 
@@ -261,27 +264,40 @@ async function runLocal(
       if (!hasMatch) continue
     }
 
-    try {
-      const result = await runSpec(spec, {
-        ...(options.headed !== undefined ? { headed: options.headed } : {}),
-        ...(options.skipValidation !== undefined ? { skipValidation: options.skipValidation } : {}),
-        timeoutMs: parseInt(options.timeout, 10),
-      })
+    let lastResult: SpecResult | null = null
+    let specFailed = false
 
-      results.push(result)
-
-      if (options.reporter === 'json') {
-        jsonReport(result)
-      } else {
-        consoleReport(result)
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        console.log(`\nRetrying "${spec.name}" (attempt ${attempt}/${maxAttempts})...`)
       }
 
-      if (result.status === 'fail') anyFailed = true
-    } catch (err) {
-      console.error(`\nError running spec "${file}":`)
-      console.error(err instanceof Error ? err.message : String(err))
-      anyFailed = true
+      try {
+        const result = await runSpec(spec, {
+          ...(options.headed !== undefined ? { headed: options.headed } : {}),
+          ...(options.skipValidation !== undefined ? { skipValidation: options.skipValidation } : {}),
+          timeoutMs: parseInt(options.timeout, 10),
+        })
+
+        if (options.reporter === 'json') {
+          jsonReport(result)
+        } else {
+          consoleReport(result)
+        }
+
+        lastResult = result
+        specFailed = result.status === 'fail'
+
+        if (!specFailed) break
+      } catch (err) {
+        console.error(`\nError running spec "${file}":`)
+        console.error(err instanceof Error ? err.message : String(err))
+        specFailed = true
+      }
     }
+
+    if (lastResult) results.push(lastResult)
+    if (specFailed) anyFailed = true
   }
 
   if (options.reporter !== 'json' && results.length > 1) {
