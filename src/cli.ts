@@ -11,7 +11,7 @@
 // https://specs.example.ts ends in ".ts" but is not a TypeScript file.
 const needsTsx = (() => {
   if (process.env['__ORTHEON_TSX']) return false
-  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port'])
+  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--tag'])
   const args = process.argv.slice(2)
   const positional: string[] = []
   for (let i = 0; i < args.length; i++) {
@@ -88,6 +88,7 @@ program
   .option('--headed', 'Run browser in headed mode (show the browser window)')
   .option('--timeout <ms>', 'Default step timeout in milliseconds', '30000')
   .option('--skip-validation', 'Skip pre-run validation (local mode only)')
+  .option('--tag <tag...>', 'Only run specs whose tags include at least one of these values (local mode only)')
   .action(async (glob: string | undefined, options: {
     from?: string
     suite?: string
@@ -95,6 +96,7 @@ program
     headed?: boolean
     timeout: string
     skipValidation?: boolean
+    tag?: string[]
   }) => {
     if (options.from !== undefined) {
       await runRemote(options.from, options.suite, options)
@@ -105,7 +107,7 @@ program
         console.error('         ortheon run --from <url> --suite <id>')
         process.exit(1)
       }
-      await runLocal(glob, options)
+      await runLocal(glob, { ...options, ...(options.tag ? { tag: options.tag } : {}) })
     }
   })
 
@@ -232,7 +234,7 @@ program
 
 async function runLocal(
   glob: string,
-  options: { reporter: string; headed?: boolean; timeout: string; skipValidation?: boolean },
+  options: { reporter: string; headed?: boolean; timeout: string; skipValidation?: boolean; tag?: string[] },
 ): Promise<void> {
   const files = await resolveGlob(glob)
 
@@ -247,6 +249,12 @@ async function runLocal(
   for (const file of files) {
     const spec = await loadSpecForCli(file)
     if (!spec) continue
+
+    if (options.tag && options.tag.length > 0) {
+      const specTags = spec.tags ?? []
+      const hasMatch = options.tag.some(t => specTags.includes(t))
+      if (!hasMatch) continue
+    }
 
     try {
       const result = await runSpec(spec, {
