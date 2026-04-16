@@ -134,6 +134,7 @@ program
       suites: Array<
         | { id: string; name: string; path: string; type: 'spec'; tags: string[]; expectedOutcome: string }
         | { id: string; name: string; path: string; type: 'agent'; toolCount: number }
+        | { id: string; name: string; path: string; type: 'unknown'; hasError: true }
       >
     }
 
@@ -167,6 +168,8 @@ program
     for (const s of suites) {
       if (s.type === 'agent') {
         console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  [agent]  ${s.toolCount} tool(s)`)
+      } else if (s.type === 'unknown') {
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  [error]  (failed to load)`)
       } else {
         const tags = s.tags.length > 0 ? s.tags.join(', ') : ''
         console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  [spec]   ${tags}`)

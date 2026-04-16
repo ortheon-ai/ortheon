@@ -179,6 +179,15 @@ export function createApp(suites: ServerSuite[]): express.Application {
     });
 
     const result = filtered.map((s) => {
+      if (s.kind === null) {
+        return {
+          id: s.id,
+          name: s.name,
+          path: s.relativePath,
+          type: "unknown" as const,
+          hasError: true,
+        };
+      }
       if (isAgentSuite(s)) {
         return {
           id: s.id,
