@@ -367,12 +367,13 @@ async function runRemote(
   console.log(`Fetching plan from: ${artifactUrl}`)
 
   let artifact: {
+    planType: 'behavioral' | 'agent' | string
     planVersion: number
-    plan: ExecutionPlan
+    plan: ExecutionPlan | Record<string, unknown>
     validation: { errors: string[]; warnings: string[] }
-    expectedOutcome: string
-    tags: string[]
-    safety: string | null
+    expectedOutcome?: string
+    tags?: string[]
+    safety?: string | null
   }
 
   try {
@@ -409,9 +410,14 @@ async function runRemote(
     }
   }
 
+  if (artifact.planType === 'agent') {
+    console.error(`Suite "${suiteId}" is an agent spec. Agent specs cannot be run with "ortheon run" -- use an agent runtime to consume this plan.`)
+    process.exit(1)
+  }
+
   let result: SpecResult
   try {
-    result = await runPlan(artifact.plan, {
+    result = await runPlan(artifact.plan as ExecutionPlan, {
       ...(options.headed !== undefined ? { headed: options.headed } : {}),
       timeoutMs: parseInt(options.timeout, 10),
     })
