@@ -276,19 +276,23 @@ export type ValidationResult = {
 
 // RuntimeMessageSource: the source of a message at runtime (never 'any')
 export type RuntimeMessageSource = 'user' | 'llm' | 'tool'
-// MatchSource: the source field in a tool match rule ('any' is an authoring convenience)
+// MatchSource: the source field in a tool command source ('any' is an authoring convenience)
 export type MatchSource = RuntimeMessageSource | 'any'
 
-export type ToolMatch = {
-  source: MatchSource
-  pattern: RegExp
+// Arg schema for declarative command argument validation
+export type ArgType = 'string' | 'number' | 'boolean'
+export type ArgField = {
+  type: ArgType
+  required?: boolean
 }
+export type ArgSpec = Record<string, ArgField>
 
 export type ConversationTool = {
-  name: string
-  match: ToolMatch[]
-  description?: string
-  prompt?: string
+  name: string            // kebab-case command name
+  aliases?: string[]      // optional alternate command names (kebab-case)
+  source?: MatchSource    // which message source may emit this command; defaults to 'llm'
+  args?: ArgSpec
+  prompt?: Resolvable<string>  // injected instruction returned to the caller on dispatch
 }
 
 export type AgentSpec = {
@@ -303,17 +307,12 @@ export type AgentSpec = {
 // Agent compiled plan types (JSON-serializable)
 // ---------------------------------------------------------------------------
 
-export type SerializedToolMatch = {
-  source: MatchSource
-  pattern: string  // RegExp.source
-  flags: string    // RegExp.flags
-}
-
 export type SerializedTool = {
   name: string
-  match: SerializedToolMatch[]
-  description?: string
-  prompt?: string
+  aliases?: string[]
+  source: MatchSource     // always explicit in plan (defaulted from 'llm' during compile)
+  args?: ArgSpec
+  prompt?: Resolvable<string>
 }
 
 export type AgentPlan = {
@@ -321,10 +320,13 @@ export type AgentPlan = {
   // env() markers preserved unresolved; secret() triggers a validator warning
   system: Resolvable<string>
   tools: SerializedTool[]
+  // LLM-ready command reference generated from the tools array.
+  // Append to the system prompt so the LLM knows the available commands.
+  commandReference: string
 }
 
 // ---------------------------------------------------------------------------
-// Agent matcher I/O types
+// Agent step I/O types
 // ---------------------------------------------------------------------------
 
 export type AgentMessage = {
@@ -332,15 +334,20 @@ export type AgentMessage = {
   source: RuntimeMessageSource
 }
 
-export type ToolCandidate = {
-  name: string
-  matchIndex: number  // which match rule fired (index into tool.match[])
-  captures: string[]  // regex capture groups from first match
+export type ToolCallResult = {
+  name: string                    // canonical tool name
+  args: Record<string, unknown>   // parsed and coerced arg values
+  raw: string                     // the original command line as it appeared in the message
+  prompt?: Resolvable<string>     // from the tool definition, for the caller to inject
+  validation?: {
+    valid: boolean
+    errors?: string[]
+  }
 }
 
-export type AgentMatchResult = {
-  // Dispatch candidates, not execution directives. The caller decides what to execute.
-  candidates: ToolCandidate[]
+export type AgentStepResult = {
+  // Dispatch candidates ordered by appearance in the message. Caller decides what to execute.
+  candidates: ToolCallResult[]
 }
 
 // ---------------------------------------------------------------------------

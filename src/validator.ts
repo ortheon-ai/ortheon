@@ -1,6 +1,7 @@
 import type {
   AgentSpec,
   ApiStep,
+  ArgType,
   BrowserStep,
   Diagnostic,
   ExecutableStep,
@@ -489,7 +490,9 @@ function checkRefsInStep(
 // Agent validator
 // ---------------------------------------------------------------------------
 
-const VALID_MATCH_SOURCES = new Set<MatchSource>(['user', 'llm', 'tool', 'any'])
+const KEBAB_RE = /^[a-z0-9][a-z0-9-]*$/
+const VALID_SOURCES = new Set<MatchSource>(['user', 'llm', 'tool', 'any'])
+const VALID_ARG_TYPES = new Set<ArgType>(['string', 'number', 'boolean'])
 
 export function validateAgent(spec: AgentSpec): ValidationResult {
   const errors: Diagnostic[] = []
@@ -518,33 +521,69 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
     })
   }
 
-  // Tool name uniqueness
-  const toolNames = new Set<string>()
+  // Build a global identifier registry (names + aliases) for uniqueness checks
+  const allIdentifiers = new Set<string>()
+
   for (const t of spec.tools) {
-    if (toolNames.has(t.name)) {
+    // Tool name must be kebab-case
+    if (!KEBAB_RE.test(t.name)) {
       errors.push({
         severity: 'error',
-        message: `Duplicate tool name: "${t.name}"`,
-      })
-    }
-    toolNames.add(t.name)
-
-    // Each tool must have at least one match rule
-    if (!t.match || t.match.length === 0) {
-      errors.push({
-        severity: 'error',
-        message: `tool("${t.name}") must have at least one match rule`,
+        message: `tool name "${t.name}" must be kebab-case (lowercase letters, digits, hyphens; must start with a letter or digit)`,
       })
     }
 
-    // Each match rule must have a valid source
-    for (let i = 0; i < (t.match ?? []).length; i++) {
-      const m = t.match[i]!
-      if (!VALID_MATCH_SOURCES.has(m.source)) {
+    // Tool name must be globally unique
+    if (allIdentifiers.has(t.name)) {
+      errors.push({
+        severity: 'error',
+        message: `Duplicate command identifier: "${t.name}" (conflicts with another tool name or alias)`,
+      })
+    } else {
+      allIdentifiers.add(t.name)
+    }
+
+    // Aliases must be kebab-case and globally unique
+    for (const alias of t.aliases ?? []) {
+      if (!KEBAB_RE.test(alias)) {
         errors.push({
           severity: 'error',
-          message: `tool("${t.name}") match[${i}] has invalid source "${m.source}". Valid values: user, llm, tool, any`,
+          message: `tool("${t.name}") alias "${alias}" must be kebab-case`,
         })
+      }
+      if (allIdentifiers.has(alias)) {
+        errors.push({
+          severity: 'error',
+          message: `Duplicate command identifier: "${alias}" (alias of tool "${t.name}" conflicts with another tool name or alias)`,
+        })
+      } else {
+        allIdentifiers.add(alias)
+      }
+    }
+
+    // Source must be valid when specified
+    if (t.source !== undefined && !VALID_SOURCES.has(t.source)) {
+      errors.push({
+        severity: 'error',
+        message: `tool("${t.name}") has invalid source "${t.source}". Valid values: user, llm, tool, any`,
+      })
+    }
+
+    // ArgSpec field names and types
+    if (t.args) {
+      for (const [fieldName, field] of Object.entries(t.args)) {
+        if (!KEBAB_RE.test(fieldName)) {
+          errors.push({
+            severity: 'error',
+            message: `tool("${t.name}") arg "${fieldName}" must be kebab-case`,
+          })
+        }
+        if (!VALID_ARG_TYPES.has(field.type as ArgType)) {
+          errors.push({
+            severity: 'error',
+            message: `tool("${t.name}") arg "${fieldName}" has invalid type "${field.type}". Valid types: string, number, boolean`,
+          })
+        }
       }
     }
   }

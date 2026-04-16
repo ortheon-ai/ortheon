@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { agent, tool, env, secret } from '../src/dsl.js'
-import { compileAgent, formatAgentPlan } from '../src/compiler.js'
+import { compileAgent, formatAgentPlan, formatCommandReference } from '../src/compiler.js'
 import { validateAgent } from '../src/validator.js'
-import { matchAgent } from '../src/runner.js'
+import { runAgentStep } from '../src/runner.js'
 import { createApp, type ServerSuite } from '../src/server/app.js'
 import type { AgentSpec, AgentPlan } from '../src/types.js'
 
@@ -13,18 +13,20 @@ import type { AgentSpec, AgentPlan } from '../src/types.js'
 // ---------------------------------------------------------------------------
 
 const minimalAgentSpec: AgentSpec = agent('triage', {
-  system: 'You are a helpful triage bot.',
+  system: 'You are a helpful triage bot. Emit commands using /name key="value".',
   tools: [
     tool('create-issue', {
-      match: [
-        { source: 'user', pattern: /please create an issue/i },
-        { source: 'llm', pattern: /I'll create an issue for you/i },
-      ],
-      description: 'Creates a GitHub issue',
-      prompt: 'When confirmed, call this tool.',
+      source: 'llm',
+      args: {
+        title: { type: 'string', required: true },
+        priority: { type: 'string' },
+      },
+      prompt: 'Create a GitHub issue using the provided title and details.',
     }),
     tool('lookup-docs', {
-      match: [{ source: 'any', pattern: /how do I (.+)\?/i }],
+      aliases: ['docs'],
+      source: 'any',
+      args: { query: { type: 'string', required: true } },
     }),
   ],
 })
@@ -54,20 +56,27 @@ describe('agent() / tool() DSL', () => {
 
   it('agent() sets name and system', () => {
     expect(minimalAgentSpec.name).toBe('triage')
-    expect(minimalAgentSpec.system).toBe('You are a helpful triage bot.')
+    expect(minimalAgentSpec.system).toContain('triage bot')
   })
 
-  it('tool() preserves name, match, description, prompt', () => {
+  it('tool() preserves name, source, args, prompt', () => {
     const t = minimalAgentSpec.tools[0]!
     expect(t.name).toBe('create-issue')
-    expect(t.match).toHaveLength(2)
-    expect(t.description).toBe('Creates a GitHub issue')
-    expect(t.prompt).toBe('When confirmed, call this tool.')
+    expect(t.source).toBe('llm')
+    expect(t.args).toBeDefined()
+    expect(t.prompt).toBe('Create a GitHub issue using the provided title and details.')
   })
 
-  it('tool() without description or prompt omits those keys', () => {
+  it('tool() preserves aliases', () => {
     const t = minimalAgentSpec.tools[1]!
-    expect('description' in t).toBe(false)
+    expect(t.aliases).toEqual(['docs'])
+  })
+
+  it('tool() without source, aliases, args, prompt omits those keys', () => {
+    const t = tool('bare', {})
+    expect('source' in t).toBe(false)
+    expect('aliases' in t).toBe(false)
+    expect('args' in t).toBe(false)
     expect('prompt' in t).toBe(false)
   })
 
@@ -93,37 +102,96 @@ describe('compileAgent()', () => {
   })
 
   it('passes system through unchanged', () => {
-    expect(plan.system).toBe('You are a helpful triage bot.')
+    expect(plan.system).toContain('triage bot')
   })
 
-  it('serializes RegExp.source and RegExp.flags', () => {
-    const rule = plan.tools[0]!.match[0]!
-    expect(rule.pattern).toBe('please create an issue')
-    expect(rule.flags).toBe('i')
+  it('defaults source to llm when not specified', () => {
+    const s = agent('a', { system: 'hi', tools: [tool('cmd', {})] })
+    const p = compileAgent(s)
+    expect(p.tools[0]!.source).toBe('llm')
   })
 
-  it('preserves source on each match rule', () => {
-    expect(plan.tools[0]!.match[0]!.source).toBe('user')
-    expect(plan.tools[0]!.match[1]!.source).toBe('llm')
-    expect(plan.tools[1]!.match[0]!.source).toBe('any')
+  it('preserves explicit source', () => {
+    expect(plan.tools[0]!.source).toBe('llm')
+    expect(plan.tools[1]!.source).toBe('any')
   })
 
-  it('passes description and prompt through', () => {
-    const t = plan.tools[0]!
-    expect(t.description).toBe('Creates a GitHub issue')
-    expect(t.prompt).toBe('When confirmed, call this tool.')
+  it('passes aliases through', () => {
+    expect(plan.tools[1]!.aliases).toEqual(['docs'])
   })
 
-  it('omits description/prompt when not set', () => {
-    const t = plan.tools[1]!
-    expect('description' in t).toBe(false)
-    expect('prompt' in t).toBe(false)
+  it('passes args through', () => {
+    const args = plan.tools[0]!.args!
+    expect(args['title']).toEqual({ type: 'string', required: true })
+    expect(args['priority']).toEqual({ type: 'string' })
+  })
+
+  it('passes prompt through', () => {
+    expect(plan.tools[0]!.prompt).toBe('Create a GitHub issue using the provided title and details.')
+  })
+
+  it('omits aliases when not set (create-issue has no aliases)', () => {
+    expect('aliases' in plan.tools[0]!).toBe(false)
   })
 
   it('preserves env() markers unresolved in system', () => {
     const s = agent('env-agent', { system: env('SYSTEM_PROMPT'), tools: [] })
     const p = compileAgent(s)
     expect(p.system).toEqual({ __type: 'env', name: 'SYSTEM_PROMPT' })
+  })
+
+  it('populates commandReference on the plan', () => {
+    expect(typeof plan.commandReference).toBe('string')
+    expect(plan.commandReference).toContain('/create-issue')
+    expect(plan.commandReference).toContain('/lookup-docs')
+  })
+
+  it('commandReference is empty string when no tools', () => {
+    const s = agent('empty', { system: 'hi', tools: [] })
+    const p = compileAgent(s)
+    expect(p.commandReference).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// formatCommandReference
+// ---------------------------------------------------------------------------
+
+describe('formatCommandReference()', () => {
+  const plan = compileAgent(minimalAgentSpec)
+
+  it('includes command names with slash prefix', () => {
+    expect(plan.commandReference).toContain('/create-issue')
+    expect(plan.commandReference).toContain('/lookup-docs')
+  })
+
+  it('includes arg placeholders with types', () => {
+    expect(plan.commandReference).toContain('title="<string, required>"')
+    expect(plan.commandReference).toContain('priority="<string>"')
+  })
+
+  it('includes aliases', () => {
+    expect(plan.commandReference).toContain('aliases: docs')
+  })
+
+  it('includes formatting rules', () => {
+    expect(plan.commandReference).toContain('One command per line')
+    expect(plan.commandReference).toContain('Always quote argument values')
+  })
+
+  it('returns empty string for empty tool list', () => {
+    expect(formatCommandReference([])).toBe('')
+  })
+
+  it('includes commands with no args (no arg placeholders on the command line)', () => {
+    const tools = compileAgent(agent('a', {
+      system: 'hi',
+      tools: [tool('ping', { source: 'llm' })],
+    })).tools
+    const ref = formatCommandReference(tools)
+    expect(ref).toContain('/ping')
+    const pingLine = ref.split('\n').find(l => l.includes('/ping'))!
+    expect(pingLine).not.toContain('="<')
   })
 })
 
@@ -141,16 +209,35 @@ describe('formatAgentPlan()', () => {
   it('includes the system prompt', () => {
     const plan = compileAgent(minimalAgentSpec)
     const out = formatAgentPlan(plan)
-    expect(out).toContain('You are a helpful triage bot.')
+    expect(out).toContain('triage bot')
   })
 
-  it('includes tool names and match rules', () => {
+  it('includes command names and sources', () => {
     const plan = compileAgent(minimalAgentSpec)
     const out = formatAgentPlan(plan)
-    expect(out).toContain('tool: create-issue')
-    expect(out).toContain('tool: lookup-docs')
-    expect(out).toContain('source=user')
-    expect(out).toContain('source=any')
+    expect(out).toContain('command: create-issue')
+    expect(out).toContain('command: lookup-docs')
+    expect(out).toContain('source: llm')
+    expect(out).toContain('source: any')
+  })
+
+  it('shows aliases', () => {
+    const plan = compileAgent(minimalAgentSpec)
+    const out = formatAgentPlan(plan)
+    expect(out).toContain('aliases: docs')
+  })
+
+  it('shows arg grammar line', () => {
+    const plan = compileAgent(minimalAgentSpec)
+    const out = formatAgentPlan(plan)
+    expect(out).toContain('Arg syntax: /command key="value"')
+  })
+
+  it('shows args with types and required marker', () => {
+    const plan = compileAgent(minimalAgentSpec)
+    const out = formatAgentPlan(plan)
+    expect(out).toContain('title (string, required)')
+    expect(out).toContain('priority (string)')
   })
 
   it('renders env() system as a label', () => {
@@ -159,10 +246,10 @@ describe('formatAgentPlan()', () => {
     expect(out).toContain('env("SYSTEM_PROMPT")')
   })
 
-  it('shows (no tools defined) when tools list is empty', () => {
+  it('shows (no commands defined) when tools list is empty', () => {
     const s = agent('empty', { system: 'hi', tools: [] })
     const out = formatAgentPlan(compileAgent(s))
-    expect(out).toContain('(no tools defined)')
+    expect(out).toContain('(no commands defined)')
   })
 })
 
@@ -201,49 +288,108 @@ describe('validateAgent()', () => {
     const s = agent('dup', {
       system: 'hi',
       tools: [
-        tool('same', { match: [{ source: 'user', pattern: /x/ }] }),
-        tool('same', { match: [{ source: 'user', pattern: /y/ }] }),
+        tool('same', {}),
+        tool('same', {}),
       ],
     })
     const result = validateAgent(s)
     expect(result.valid).toBe(false)
-    expect(result.errors.some(e => e.message.includes('Duplicate tool name'))).toBe(true)
+    expect(result.errors.some(e => e.message.includes('Duplicate command identifier'))).toBe(true)
   })
 
-  it('errors when a tool has no match rules', () => {
-    const s = agent('bad', {
-      system: 'hi',
-      tools: [tool('empty-tool', { match: [] })],
-    })
-    const result = validateAgent(s)
-    expect(result.valid).toBe(false)
-    expect(result.errors.some(e => e.message.includes('at least one match rule'))).toBe(true)
-  })
-
-  it('errors on an invalid match source', () => {
-    const s = agent('bad', {
+  it('errors when alias clashes with another tool name', () => {
+    const s = agent('clash', {
       system: 'hi',
       tools: [
-        // cast to bypass TS so we can test the runtime validator
-        tool('t', { match: [{ source: 'robot' as 'user', pattern: /x/ }] }),
+        tool('create-issue', {}),
+        tool('other', { aliases: ['create-issue'] }),
       ],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('Duplicate command identifier'))).toBe(true)
+  })
+
+  it('errors when alias clashes with another alias', () => {
+    const s = agent('clash', {
+      system: 'hi',
+      tools: [
+        tool('a', { aliases: ['shared'] }),
+        tool('b', { aliases: ['shared'] }),
+      ],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('Duplicate command identifier'))).toBe(true)
+  })
+
+  it('errors on non-kebab-case tool name', () => {
+    const s = agent('bad', {
+      system: 'hi',
+      tools: [tool('CreateIssue' as string, {})],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('kebab-case'))).toBe(true)
+  })
+
+  it('errors on non-kebab-case alias', () => {
+    const s = agent('bad', {
+      system: 'hi',
+      tools: [tool('good', { aliases: ['BadAlias'] })],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('kebab-case'))).toBe(true)
+  })
+
+  it('errors on invalid source', () => {
+    const s = agent('bad', {
+      system: 'hi',
+      tools: [tool('t', { source: 'robot' as 'user' })],
     })
     const result = validateAgent(s)
     expect(result.valid).toBe(false)
     expect(result.errors.some(e => e.message.includes('invalid source'))).toBe(true)
   })
 
-  it('accepts valid match sources: user, llm, tool, any', () => {
-    const s = agent('all-sources', {
+  it('accepts valid sources: user, llm, tool, any', () => {
+    for (const src of ['user', 'llm', 'tool', 'any'] as const) {
+      const s = agent('a', { system: 'hi', tools: [tool('cmd', { source: src })] })
+      expect(validateAgent(s).valid).toBe(true)
+    }
+  })
+
+  it('errors on invalid arg type', () => {
+    const s = agent('bad', {
+      system: 'hi',
+      tools: [tool('t', { args: { count: { type: 'array' as 'string' } } })],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('invalid type'))).toBe(true)
+  })
+
+  it('errors on non-kebab-case arg name', () => {
+    const s = agent('bad', {
+      system: 'hi',
+      tools: [tool('t', { args: { myField: { type: 'string' } } })],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('kebab-case'))).toBe(true)
+  })
+
+  it('accepts valid arg definitions', () => {
+    const s = agent('ok', {
       system: 'hi',
       tools: [
-        tool('multi', {
-          match: [
-            { source: 'user', pattern: /a/ },
-            { source: 'llm', pattern: /b/ },
-            { source: 'tool', pattern: /c/ },
-            { source: 'any', pattern: /d/ },
-          ],
+        tool('cmd', {
+          args: {
+            title: { type: 'string', required: true },
+            count: { type: 'number' },
+            active: { type: 'boolean' },
+          },
         }),
       ],
     })
@@ -252,147 +398,220 @@ describe('validateAgent()', () => {
 })
 
 // ---------------------------------------------------------------------------
-// matchAgent
+// runAgentStep
 // ---------------------------------------------------------------------------
 
-describe('matchAgent()', () => {
+describe('runAgentStep()', () => {
   const plan = compileAgent(minimalAgentSpec)
 
-  it('returns empty candidates when no rules match', () => {
-    const result = matchAgent(plan, { text: 'just a regular message', source: 'user' })
+  it('returns empty candidates when no commands present', () => {
+    const result = runAgentStep(plan, { text: 'just some prose with no commands', source: 'llm' })
     expect(result.candidates).toHaveLength(0)
   })
 
-  it('matches a user-source rule against a user message', () => {
-    const result = matchAgent(plan, { text: 'please create an issue', source: 'user' })
+  it('parses a simple command with no args', () => {
+    const p = compileAgent(agent('a', {
+      system: 'hi',
+      tools: [tool('ping', { source: 'llm' })],
+    }))
+    const result = runAgentStep(p, { text: '/ping', source: 'llm' })
     expect(result.candidates).toHaveLength(1)
-    expect(result.candidates[0]!.name).toBe('create-issue')
-    expect(result.candidates[0]!.matchIndex).toBe(0)
+    expect(result.candidates[0]!.name).toBe('ping')
+    expect(result.candidates[0]!.args).toEqual({})
   })
 
-  it('does NOT match a user-source rule against an llm message', () => {
-    const result = matchAgent(plan, { text: 'please create an issue', source: 'llm' })
-    // Only the llm-source rule for create-issue could match, but its pattern is different
-    // So we expect no match for this text from llm source
-    expect(result.candidates.every(c => c.name !== 'create-issue' || c.matchIndex !== 0)).toBe(true)
+  it('parses key="value" args', () => {
+    const result = runAgentStep(plan, {
+      text: '/create-issue title="Order API returns 500" priority="high"',
+      source: 'llm',
+    })
+    expect(result.candidates).toHaveLength(1)
+    const c = result.candidates[0]!
+    expect(c.name).toBe('create-issue')
+    expect(c.args['title']).toBe('Order API returns 500')
+    expect(c.args['priority']).toBe('high')
   })
 
-  it('matches an llm-source rule against an llm message', () => {
-    const result = matchAgent(plan, { text: "I'll create an issue for you", source: 'llm' })
-    const match = result.candidates.find(c => c.name === 'create-issue' && c.matchIndex === 1)
-    expect(match).toBeDefined()
+  it('preserves the raw line', () => {
+    const line = '/create-issue title="Test"'
+    const result = runAgentStep(plan, { text: line, source: 'llm' })
+    expect(result.candidates[0]!.raw).toBe(line)
   })
 
-  it('matches source=any against any source', () => {
-    const docQuery = 'how do I reset my password?'
+  it('resolves aliases to canonical tool name', () => {
+    const result = runAgentStep(plan, {
+      text: '/docs query="how to reset"',
+      source: 'user',
+    })
+    expect(result.candidates).toHaveLength(1)
+    expect(result.candidates[0]!.name).toBe('lookup-docs')
+  })
+
+  it('ignores unknown command names', () => {
+    const result = runAgentStep(plan, { text: '/no-such-command', source: 'llm' })
+    expect(result.candidates).toHaveLength(0)
+  })
+
+  it('filters by source: llm-only tool not triggered by user message', () => {
+    const result = runAgentStep(plan, {
+      text: '/create-issue title="Test"',
+      source: 'user',
+    })
+    expect(result.candidates).toHaveLength(0)
+  })
+
+  it('source=any matches user, llm, and tool messages', () => {
     for (const source of ['user', 'llm', 'tool'] as const) {
-      const result = matchAgent(plan, { text: docQuery, source })
-      const match = result.candidates.find(c => c.name === 'lookup-docs')
-      expect(match).toBeDefined()
+      const result = runAgentStep(plan, {
+        text: '/lookup-docs query="test"',
+        source,
+      })
+      expect(result.candidates).toHaveLength(1)
     }
   })
 
-  it('captures regex groups', () => {
-    const result = matchAgent(plan, { text: 'how do I reset my password?', source: 'user' })
-    const match = result.candidates.find(c => c.name === 'lookup-docs')
-    expect(match?.captures[0]).toBe('reset my password')
+  it('includes prompt from tool definition', () => {
+    const result = runAgentStep(plan, {
+      text: '/create-issue title="Test"',
+      source: 'llm',
+    })
+    expect(result.candidates[0]!.prompt).toBe('Create a GitHub issue using the provided title and details.')
   })
 
-  it('returns matchIndex identifying which rule fired', () => {
-    const result = matchAgent(plan, { text: "I'll create an issue for you", source: 'llm' })
-    const match = result.candidates.find(c => c.name === 'create-issue')
-    expect(match?.matchIndex).toBe(1)
+  it('tool without prompt omits the prompt field', () => {
+    const result = runAgentStep(plan, {
+      text: '/lookup-docs query="test"',
+      source: 'llm',
+    })
+    expect('prompt' in result.candidates[0]!).toBe(false)
   })
 
-  it('produces multiple candidates when multiple rules match', () => {
-    // A message that matches both user-source rules of create-issue and any-source of lookup-docs
-    const multiPlan = compileAgent(agent('multi', {
+  it('produces validation.valid=true when all required args present', () => {
+    const result = runAgentStep(plan, {
+      text: '/create-issue title="Bug"',
+      source: 'llm',
+    })
+    expect(result.candidates[0]!.validation?.valid).toBe(true)
+  })
+
+  it('produces validation.valid=false when required arg missing', () => {
+    const result = runAgentStep(plan, {
+      text: '/create-issue priority="high"',
+      source: 'llm',
+    })
+    const c = result.candidates[0]!
+    expect(c.validation?.valid).toBe(false)
+    expect(c.validation?.errors?.some(e => e.includes('title'))).toBe(true)
+  })
+
+  it('coerces number args', () => {
+    const p = compileAgent(agent('a', {
       system: 'hi',
-      tools: [
-        tool('both', {
-          match: [
-            { source: 'user', pattern: /foo/ },
-            { source: 'any', pattern: /foo/ },
-          ],
-        }),
-      ],
+      tools: [tool('set', { source: 'llm', args: { count: { type: 'number' } } })],
     }))
-    const result = matchAgent(multiPlan, { text: 'foo', source: 'user' })
-    // Both rules match, so 2 candidates for the same tool
+    const result = runAgentStep(p, { text: '/set count="42"', source: 'llm' })
+    expect(result.candidates[0]!.args['count']).toBe(42)
+  })
+
+  it('errors on non-numeric number arg', () => {
+    const p = compileAgent(agent('a', {
+      system: 'hi',
+      tools: [tool('set', { source: 'llm', args: { count: { type: 'number' } } })],
+    }))
+    const result = runAgentStep(p, { text: '/set count="abc"', source: 'llm' })
+    expect(result.candidates[0]!.validation?.valid).toBe(false)
+  })
+
+  it('coerces boolean args (true/false)', () => {
+    const p = compileAgent(agent('a', {
+      system: 'hi',
+      tools: [tool('toggle', { source: 'llm', args: { active: { type: 'boolean' } } })],
+    }))
+    const r1 = runAgentStep(p, { text: '/toggle active="true"', source: 'llm' })
+    const r2 = runAgentStep(p, { text: '/toggle active="false"', source: 'llm' })
+    expect(r1.candidates[0]!.args['active']).toBe(true)
+    expect(r2.candidates[0]!.args['active']).toBe(false)
+  })
+
+  it('errors on invalid boolean arg value', () => {
+    const p = compileAgent(agent('a', {
+      system: 'hi',
+      tools: [tool('toggle', { source: 'llm', args: { active: { type: 'boolean' } } })],
+    }))
+    const result = runAgentStep(p, { text: '/toggle active="yes"', source: 'llm' })
+    expect(result.candidates[0]!.validation?.valid).toBe(false)
+  })
+
+  it('passes unknown args through as strings (no strict mode)', () => {
+    const result = runAgentStep(plan, {
+      text: '/create-issue title="Bug" extra-info="ok"',
+      source: 'llm',
+    })
+    expect(result.candidates[0]!.args['extra-info']).toBe('ok')
+  })
+
+  it('extracts multiple commands from one message in order', () => {
+    const text = [
+      'Sure, here is what I will do:',
+      '/lookup-docs query="how to create issues"',
+      'And then:',
+      '/create-issue title="Repro bug"',
+    ].join('\n')
+    const result = runAgentStep(plan, { text, source: 'llm' })
     expect(result.candidates).toHaveLength(2)
-    expect(result.candidates[0]!.matchIndex).toBe(0)
-    expect(result.candidates[1]!.matchIndex).toBe(1)
+    expect(result.candidates[0]!.name).toBe('lookup-docs')
+    expect(result.candidates[1]!.name).toBe('create-issue')
   })
 
-  it('is case-insensitive when the regex has the i flag', () => {
-    const result = matchAgent(plan, { text: 'PLEASE CREATE AN ISSUE', source: 'user' })
-    expect(result.candidates.some(c => c.name === 'create-issue')).toBe(true)
+  it('ignores commands inside code fences', () => {
+    const text = [
+      'Example:',
+      '```',
+      '/create-issue title="Inside fence"',
+      '```',
+      'That was just an example.',
+    ].join('\n')
+    const result = runAgentStep(plan, { text, source: 'llm' })
+    expect(result.candidates).toHaveLength(0)
   })
 
-  it('strips g flag -- does not reuse lastIndex state', () => {
-    const gFlagPlan = compileAgent(agent('g-flag', {
-      system: 'hi',
-      tools: [
-        tool('t', {
-          match: [{ source: 'any', pattern: /foo/g }],
-        }),
-      ],
-    }))
-    // Call twice: if lastIndex leaked, the second call would fail
-    const r1 = matchAgent(gFlagPlan, { text: 'foo', source: 'user' })
-    const r2 = matchAgent(gFlagPlan, { text: 'foo', source: 'user' })
-    expect(r1.candidates).toHaveLength(1)
-    expect(r2.candidates).toHaveLength(1)
+  it('ignores commands on blockquote lines', () => {
+    const text = '> /create-issue title="Quoted"\nactual prose'
+    const result = runAgentStep(plan, { text, source: 'llm' })
+    expect(result.candidates).toHaveLength(0)
   })
 
-  it('strips y (sticky) flag -- prevents sticky matching confusion', () => {
-    const yFlagPlan = compileAgent(agent('y-flag', {
-      system: 'hi',
-      tools: [
-        tool('t', {
-          match: [{ source: 'any', pattern: /foo/y }],
-        }),
-      ],
-    }))
-    const result = matchAgent(yFlagPlan, { text: 'bar foo', source: 'user' })
-    // Sticky would require match at index 0; without sticky it should match mid-string
+  it('drops lines with malformed args (unquoted values)', () => {
+    const result = runAgentStep(plan, {
+      text: '/create-issue title=unquoted',
+      source: 'llm',
+    })
+    expect(result.candidates).toHaveLength(0)
+  })
+
+  it('drops lines with malformed args (missing closing quote would be unparseable -- key with no value)', () => {
+    // key= with no value and no closing quote leaves non-whitespace residue
+    const result = runAgentStep(plan, {
+      text: '/create-issue title=',
+      source: 'llm',
+    })
+    expect(result.candidates).toHaveLength(0)
+  })
+
+  it('handles leading whitespace before command', () => {
+    const result = runAgentStep(plan, {
+      text: '  /create-issue title="Test"',
+      source: 'llm',
+    })
     expect(result.candidates).toHaveLength(1)
   })
 
-  it('uses first match only -- captures from first occurrence', () => {
-    const plan2 = compileAgent(agent('first-match', {
-      system: 'hi',
-      tools: [
-        tool('t', {
-          match: [{ source: 'any', pattern: /word: (\w+)/ }],
-        }),
-      ],
-    }))
-    const result = matchAgent(plan2, { text: 'word: alpha, word: beta', source: 'user' })
-    expect(result.candidates).toHaveLength(1)
-    expect(result.candidates[0]!.captures[0]).toBe('alpha')
-  })
-
-  it('returns empty captures array when regex has no groups', () => {
-    const plan2 = compileAgent(agent('no-groups', {
-      system: 'hi',
-      tools: [
-        tool('t', {
-          match: [{ source: 'any', pattern: /hello/ }],
-        }),
-      ],
-    }))
-    const result = matchAgent(plan2, { text: 'say hello', source: 'user' })
-    expect(result.candidates[0]!.captures).toEqual([])
-  })
-
-  it('respects tool declaration order', () => {
-    const result = matchAgent(plan, { text: 'please create an issue how do I do something?', source: 'user' })
-    // create-issue appears before lookup-docs in the spec
-    const names = result.candidates.map(c => c.name)
-    const createIdx = names.indexOf('create-issue')
-    const lookupIdx = names.indexOf('lookup-docs')
-    expect(createIdx).toBeLessThan(lookupIdx)
+  it('does not match mid-line commands (not line-anchored)', () => {
+    const result = runAgentStep(plan, {
+      text: 'call /create-issue title="Test" now',
+      source: 'llm',
+    })
+    expect(result.candidates).toHaveLength(0)
   })
 })
 
@@ -478,6 +697,13 @@ describe('server: GET /api/suites/:id/plan for agent suite', () => {
     expect(Array.isArray(b['tools'])).toBe(true)
     expect(b['renderedPlan']).toContain('triage')
   })
+
+  it('rendered plan contains command table', async () => {
+    const { body } = await get(srv.baseUrl, `/api/suites/${suite.id}/plan`)
+    const rendered = (body as Record<string, unknown>)['renderedPlan'] as string
+    expect(rendered).toContain('command: create-issue')
+    expect(rendered).toContain('Arg syntax')
+  })
 })
 
 describe('server: GET /api/suites/:id/execution-plan for agent suite', () => {
@@ -498,13 +724,17 @@ describe('server: GET /api/suites/:id/execution-plan for agent suite', () => {
     const plan = b['plan'] as Record<string, unknown>
     expect(plan['specName']).toBe('triage')
     expect(Array.isArray(plan['tools'])).toBe(true)
+    expect(typeof plan['commandReference']).toBe('string')
+    expect((plan['commandReference'] as string)).toContain('/create-issue')
   })
 
-  it('serialized patterns are strings not RegExp objects', async () => {
+  it('serialized tools have source and name (no match array)', async () => {
     const { body } = await get(srv.baseUrl, `/api/suites/${suite.id}/execution-plan`)
     const plan = (body as Record<string, unknown>)['plan'] as Record<string, unknown>
-    const tools = plan['tools'] as Array<{ match: Array<{ pattern: unknown }> }>
-    expect(typeof tools[0]!.match[0]!.pattern).toBe('string')
+    const tools = plan['tools'] as Array<Record<string, unknown>>
+    expect(tools[0]!['name']).toBe('create-issue')
+    expect(tools[0]!['source']).toBe('llm')
+    expect('match' in tools[0]!).toBe(false)
   })
 })
 

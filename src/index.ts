@@ -24,9 +24,9 @@ export {
 } from './dsl.js'
 
 // Runtime
-export { runSpec, runPlan, matchAgent } from './runner.js'
+export { runSpec, runPlan, runAgentStep } from './runner.js'
 export type { RunOptions, RunPlanOptions } from './runner.js'
-export { compile, compileAgent, formatExpandedPlan, formatAgentPlan } from './compiler.js'
+export { compile, compileAgent, formatExpandedPlan, formatAgentPlan, formatCommandReference } from './compiler.js'
 export { validate, validateStructure, validateExpandedPlan, validateAgent } from './validator.js'
 export { RuntimeContext } from './context.js'
 
@@ -71,12 +71,13 @@ export type {
   AgentSpec,
   AgentPlan,
   ConversationTool,
-  ToolMatch,
   MatchSource,
   RuntimeMessageSource,
+  ArgType,
+  ArgField,
+  ArgSpec,
   SerializedTool,
-  SerializedToolMatch,
   AgentMessage,
-  ToolCandidate,
-  AgentMatchResult,
+  ToolCallResult,
+  AgentStepResult,
 } from './types.js'

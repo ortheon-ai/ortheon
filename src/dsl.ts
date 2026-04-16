@@ -3,6 +3,7 @@ import type {
   ApiContract,
   ApiOptions,
   ApiStep,
+  ArgSpec,
   BearerValue,
   BrowserOptions,
   BrowserStep,
@@ -27,7 +28,6 @@ import type {
   SpecSafety,
   Step,
   StepAction,
-  ToolMatch,
   UseStep,
 } from './types.js'
 
@@ -197,16 +197,18 @@ export function spec(name: string, config: SpecConfig): Spec {
 // ---------------------------------------------------------------------------
 
 export type ConversationToolConfig = {
-  match: ToolMatch[]
-  description?: string
-  prompt?: string
+  aliases?: string[]
+  source?: MatchSource
+  args?: ArgSpec
+  prompt?: Resolvable<string>
 }
 
 export function tool(name: string, config: ConversationToolConfig): ConversationTool {
   return {
     name,
-    match: config.match,
-    ...(config.description !== undefined ? { description: config.description } : {}),
+    ...(config.aliases !== undefined ? { aliases: config.aliases } : {}),
+    ...(config.source !== undefined ? { source: config.source } : {}),
+    ...(config.args !== undefined ? { args: config.args } : {}),
     ...(config.prompt !== undefined ? { prompt: config.prompt } : {}),
   }
 }
@@ -229,4 +231,4 @@ export function agent(name: string, config: AgentConfig): AgentSpec {
 // Re-export types for spec file convenience
 // ---------------------------------------------------------------------------
 
-export type { AgentSpec, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, MatchSource, Spec, SpecExpectedOutcome, Step, Section, ApiContract, ToolMatch } from './types.js'
+export type { AgentSpec, ArgField, ArgSpec, ArgType, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, MatchSource, Spec, SpecExpectedOutcome, Step, Section, ApiContract } from './types.js'

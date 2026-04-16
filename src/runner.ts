@@ -1,14 +1,15 @@
 import type {
-  AgentMatchResult,
   AgentMessage,
   AgentPlan,
+  AgentStepResult,
   ExecutableStep,
   ExecutionPlan,
   ResolvedApiStep,
+  SerializedTool,
   Spec,
   SpecResult,
   StepResult,
-  ToolCandidate,
+  ToolCallResult,
 } from './types.js'
 import { RuntimeContext } from './context.js'
 import { executeApiCall } from './executors/api.js'
@@ -421,44 +422,165 @@ function assertDefaultUrlIfNeeded(plan: ExecutionPlan, resolvedUrls: Record<stri
 }
 
 // ---------------------------------------------------------------------------
-// Agent matcher
+// Agent step runner
 //
-// Single-turn pattern dispatch. Evaluates all tool match rules against the
-// message and returns the set of candidates. The caller owns looping, tool
-// execution, LLM calls, conversation history, and chain depth.
+// Deterministic /command dispatch. Parses command lines from the message text,
+// resolves aliases, filters by source, validates args, and returns ordered
+// candidates. The caller owns the execution loop, LLM calls, and history.
 //
-// Regex semantics (fixed and documented):
-//   1. Each match rule is evaluated independently against the full message.text
-//   2. A rule is tested only if source is 'any' or equals message.source
-//   3. Evaluation uses new RegExp(pattern, flags) per call — no lastIndex reuse
-//   4. A rule contributes at most one candidate (first match only)
-//   5. Captures come from the first match
-//   6. The 'g' flag has no special effect — still first match only
-//   7. One entry per tool per matching rule (multi-rule tools can produce multiple candidates)
+// Parsing rules:
+//   1. Strip ignored regions: code fences (```...```) and blockquote lines (> ...)
+//   2. Scan lines with: ^\s*\/([a-z0-9][a-z0-9-]*)(?:\s+(.*))?\s*$
+//   3. Parse args with: ([a-z0-9][a-z0-9-]*)="([^"]*)"
+//   4. Reject lines with non-whitespace remaining after removing all arg pairs
+//   5. Resolve alias -> canonical tool name; skip unknown names
+//   6. Filter by source; skip if tool.source !== message.source and !== 'any'
+//   7. Validate args against schema; produce validation result in candidate
+//   8. Order candidates by appearance in the message
 // ---------------------------------------------------------------------------
 
-export function matchAgent(plan: AgentPlan, message: AgentMessage): AgentMatchResult {
-  const candidates: ToolCandidate[] = []
+const COMMAND_LINE_RE = /^\s*\/([a-z0-9][a-z0-9-]*)(?:\s+(.*?))?\s*$/
+const ARG_PAIR_RE = /([a-z0-9][a-z0-9-]*)="([^"]*)"/g
 
-  for (const tool of plan.tools) {
-    for (let matchIndex = 0; matchIndex < tool.match.length; matchIndex++) {
-      const rule = tool.match[matchIndex]!
+function stripIgnoredRegions(text: string): string {
+  const lines = text.split('\n')
+  const result: string[] = []
+  let inFence = false
 
-      // Filter by source: 'any' always applies; others must match the message source
-      if (rule.source !== 'any' && rule.source !== message.source) continue
-
-      // Build a fresh RegExp per evaluation to avoid lastIndex stale state.
-      // Strip 'g' and 'y' flags to guarantee first-match-only semantics.
-      const safeFlags = rule.flags.replace(/[gy]/g, '')
-      const re = new RegExp(rule.pattern, safeFlags)
-      const match = re.exec(message.text)
-      if (match === null) continue
-
-      // Captures: everything after the full match (index 0)
-      const captures = match.slice(1).map(c => c ?? '')
-
-      candidates.push({ name: tool.name, matchIndex, captures })
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence
+      continue
     }
+    if (inFence) continue
+    if (/^\s*>/.test(line)) continue
+    result.push(line)
+  }
+
+  return result.join('\n')
+}
+
+function parseArgs(argsStr: string): { args: Record<string, string>; malformed: boolean } {
+  const args: Record<string, string> = {}
+  let remaining = argsStr
+
+  // Extract all key="value" pairs
+  const re = new RegExp(ARG_PAIR_RE.source, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(argsStr)) !== null) {
+    args[m[1]!] = m[2]!
+    remaining = remaining.replace(m[0], '')
+  }
+
+  // If anything non-whitespace remains, the line is malformed
+  const malformed = /\S/.test(remaining)
+  return { args, malformed }
+}
+
+function validateArgs(
+  tool: SerializedTool,
+  rawArgs: Record<string, string>
+): { coerced: Record<string, unknown>; errors: string[] } {
+  const coerced: Record<string, unknown> = {}
+  const errors: string[] = []
+
+  if (!tool.args) {
+    // No schema -- pass raw string values through as-is
+    for (const [k, v] of Object.entries(rawArgs)) {
+      coerced[k] = v
+    }
+    return { coerced, errors }
+  }
+
+  // Coerce known fields and check required
+  for (const [fieldName, field] of Object.entries(tool.args)) {
+    const raw = rawArgs[fieldName]
+    if (raw === undefined) {
+      if (field.required) {
+        errors.push(`missing required arg "${fieldName}"`)
+      }
+      continue
+    }
+    if (field.type === 'number') {
+      const n = Number(raw)
+      if (isNaN(n)) {
+        errors.push(`arg "${fieldName}" expected number, got "${raw}"`)
+        coerced[fieldName] = raw
+      } else {
+        coerced[fieldName] = n
+      }
+    } else if (field.type === 'boolean') {
+      if (raw === 'true') {
+        coerced[fieldName] = true
+      } else if (raw === 'false') {
+        coerced[fieldName] = false
+      } else {
+        errors.push(`arg "${fieldName}" expected boolean (true/false), got "${raw}"`)
+        coerced[fieldName] = raw
+      }
+    } else {
+      coerced[fieldName] = raw
+    }
+  }
+
+  // Pass unknown args through as raw strings (no strict mode in v1)
+  for (const [k, v] of Object.entries(rawArgs)) {
+    if (!(k in coerced)) {
+      coerced[k] = v
+    }
+  }
+
+  return { coerced, errors }
+}
+
+export function runAgentStep(plan: AgentPlan, message: AgentMessage): AgentStepResult {
+  // Build lookup maps
+  const nameToTool = new Map<string, SerializedTool>()
+  const aliasToName = new Map<string, string>()
+  for (const t of plan.tools) {
+    nameToTool.set(t.name, t)
+    for (const alias of t.aliases ?? []) {
+      aliasToName.set(alias, t.name)
+    }
+  }
+
+  const candidates: ToolCallResult[] = []
+  const stripped = stripIgnoredRegions(message.text)
+
+  for (const line of stripped.split('\n')) {
+    const lineMatch = COMMAND_LINE_RE.exec(line)
+    if (lineMatch === null) continue
+
+    const rawName = lineMatch[1]!
+    const argsStr = lineMatch[2] ?? ''
+
+    // Parse args; drop malformed lines
+    const { args: rawArgs, malformed } = parseArgs(argsStr)
+    if (malformed) continue
+
+    // Resolve alias -> canonical name
+    const canonicalName = aliasToName.has(rawName) ? aliasToName.get(rawName)! : rawName
+    const tool = nameToTool.get(canonicalName)
+    if (tool === undefined) continue
+
+    // Source filter
+    if (tool.source !== 'any' && tool.source !== message.source) continue
+
+    // Validate and coerce args
+    const { coerced, errors } = validateArgs(tool, rawArgs)
+    const validation: ToolCallResult['validation'] = errors.length > 0
+      ? { valid: false, errors }
+      : { valid: true }
+
+    const candidate: ToolCallResult = {
+      name: canonicalName,
+      args: coerced,
+      raw: line.trim(),
+      ...(tool.prompt !== undefined ? { prompt: tool.prompt } : {}),
+      validation,
+    }
+
+    candidates.push(candidate)
   }
 
   return { candidates }

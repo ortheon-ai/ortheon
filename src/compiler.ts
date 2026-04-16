@@ -364,19 +364,16 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
 // Agent compiler
 //
 // Transforms an AgentSpec into an AgentPlan:
-//   - Serializes RegExp patterns to { source, flags } for JSON-safe transport
-//   - Passes through system, description, prompt unchanged
+//   - Defaults source to 'llm' when not specified
+//   - Passes aliases, args, prompt, and system through unchanged
 // ---------------------------------------------------------------------------
 
 export function compileAgent(spec: AgentSpec): AgentPlan {
   const tools: SerializedTool[] = spec.tools.map(t => ({
     name: t.name,
-    match: t.match.map(m => ({
-      source: m.source,
-      pattern: m.pattern.source,
-      flags: m.pattern.flags,
-    })),
-    ...(t.description !== undefined ? { description: t.description } : {}),
+    ...(t.aliases !== undefined ? { aliases: t.aliases } : {}),
+    source: t.source ?? 'llm',
+    ...(t.args !== undefined ? { args: t.args } : {}),
     ...(t.prompt !== undefined ? { prompt: t.prompt } : {}),
   }))
 
@@ -384,7 +381,49 @@ export function compileAgent(spec: AgentSpec): AgentPlan {
     specName: spec.name,
     system: spec.system,
     tools,
+    commandReference: formatCommandReference(tools),
   }
+}
+
+// ---------------------------------------------------------------------------
+// Command reference formatter
+//
+// Generates an LLM-ready block describing available commands. Intended to be
+// appended to the system prompt so the LLM does not need to duplicate the
+// command table in the spec's `system` field.
+// ---------------------------------------------------------------------------
+
+export function formatCommandReference(tools: SerializedTool[]): string {
+  if (tools.length === 0) return ''
+
+  const lines: string[] = [
+    'Commands are available by writing /command key="value" on its own line.',
+    '',
+    'Available commands:',
+  ]
+
+  for (const t of tools) {
+    let cmdLine = `  /${t.name}`
+    if (t.args && Object.keys(t.args).length > 0) {
+      const argParts = Object.entries(t.args).map(([k, f]) => {
+        const req = f.required ? ', required' : ''
+        return `${k}="<${f.type}${req}>"`
+      })
+      cmdLine += ' ' + argParts.join(' ')
+    }
+    if (t.aliases && t.aliases.length > 0) {
+      cmdLine += `  (aliases: ${t.aliases.join(', ')})`
+    }
+    lines.push(cmdLine)
+  }
+
+  lines.push('')
+  lines.push('Rules:')
+  lines.push('- One command per line, at the start of the line')
+  lines.push('- Always quote argument values: key="value"')
+  lines.push('- Do not place commands inside code blocks or block quotes')
+
+  return lines.join('\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -403,18 +442,32 @@ export function formatAgentPlan(plan: AgentPlan): string {
   lines.push('')
 
   if (plan.tools.length === 0) {
-    lines.push('  (no tools defined)')
+    lines.push('  (no commands defined)')
     return lines.join('\n')
   }
 
+  lines.push('  Arg syntax: /command key="value" ...')
+  lines.push('')
+
   for (const t of plan.tools) {
-    lines.push(`  tool: ${t.name}`)
-    if (t.description) lines.push(`    description: ${t.description}`)
-    if (t.prompt) lines.push(`    prompt: ${t.prompt.trim()}`)
-    for (let i = 0; i < t.match.length; i++) {
-      const m = t.match[i]!
-      lines.push(`    match[${i}]: source=${m.source}  /${m.pattern}/${m.flags}`)
+    const aliasesSuffix = t.aliases && t.aliases.length > 0 ? `   aliases: ${t.aliases.join(', ')}` : ''
+    lines.push(`  command: ${t.name}   source: ${t.source}${aliasesSuffix}`)
+
+    if (t.args && Object.keys(t.args).length > 0) {
+      const argParts = Object.entries(t.args).map(([k, f]) => {
+        const req = f.required ? ', required' : ''
+        return `${k} (${f.type}${req})`
+      })
+      lines.push(`    args: ${argParts.join(', ')}`)
     }
+
+    if (t.prompt) {
+      const promptStr = typeof t.prompt === 'string'
+        ? t.prompt.trim()
+        : `${(t.prompt as { __type: string; name?: string }).__type}("${(t.prompt as { name?: string }).name ?? ''}")`
+      lines.push(`    prompt: ${promptStr}`)
+    }
+
     lines.push('')
   }
 
