@@ -430,15 +430,24 @@ export function formatCommandReference(tools: SerializedTool[]): string {
 // Agent plan formatter
 // ---------------------------------------------------------------------------
 
+function formatResolvable(value: Resolvable<string>): string {
+  if (typeof value === 'string') return value
+  const v = value as { __type: string; path?: string; name?: string; kind?: string; value?: unknown }
+  switch (v.__type) {
+    case 'ref':      return `ref("${v.path ?? ''}")`
+    case 'env':      return `env("${v.name ?? ''}")`
+    case 'secret':   return `secret("${v.name ?? ''}")`
+    case 'generate': return `generate("${v.kind ?? ''}")`
+    case 'bearer':   return `bearer(...)`
+    default:         return `${v.__type}(...)`
+  }
+}
+
 export function formatAgentPlan(plan: AgentPlan): string {
   const lines: string[] = []
 
-  const systemStr = typeof plan.system === 'string'
-    ? plan.system
-    : `${(plan.system as { __type: string; name?: string }).__type}("${(plan.system as { name?: string }).name ?? ''}")`
-
   lines.push(`Agent: ${plan.specName}`)
-  lines.push(`System prompt: ${systemStr}`)
+  lines.push(`System prompt: ${formatResolvable(plan.system)}`)
   lines.push('')
 
   if (plan.tools.length === 0) {
@@ -464,7 +473,7 @@ export function formatAgentPlan(plan: AgentPlan): string {
     if (t.prompt) {
       const promptStr = typeof t.prompt === 'string'
         ? t.prompt.trim()
-        : `${(t.prompt as { __type: string; name?: string }).__type}("${(t.prompt as { name?: string }).name ?? ''}")`
+        : formatResolvable(t.prompt)
       lines.push(`    prompt: ${promptStr}`)
     }
 

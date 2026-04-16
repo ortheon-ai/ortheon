@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { agent, tool, env, secret } from '../src/dsl.js'
+import { agent, tool, env, secret, ref } from '../src/dsl.js'
 import { compileAgent, formatAgentPlan, formatCommandReference } from '../src/compiler.js'
 import { validateAgent } from '../src/validator.js'
 import { runAgentStep } from '../src/runner.js'
@@ -244,6 +244,36 @@ describe('formatAgentPlan()', () => {
     const s = agent('env-agent', { system: env('SYSTEM_PROMPT'), tools: [] })
     const out = formatAgentPlan(compileAgent(s))
     expect(out).toContain('env("SYSTEM_PROMPT")')
+  })
+
+  it('renders secret() system with its name', () => {
+    const s = agent('secret-sys', { system: secret('SYS_SECRET'), tools: [] })
+    const out = formatAgentPlan(compileAgent(s))
+    expect(out).toContain('secret("SYS_SECRET")')
+  })
+
+  it('renders ref() system with its path', () => {
+    const s = agent('ref-sys', { system: ref('config.systemPrompt'), tools: [] })
+    const out = formatAgentPlan(compileAgent(s))
+    expect(out).toContain('ref("config.systemPrompt")')
+  })
+
+  it('renders env() prompt with its name', () => {
+    const s = agent('env-prompt', {
+      system: 'hi',
+      tools: [tool('do-thing', { prompt: env('TOOL_PROMPT') })],
+    })
+    const out = formatAgentPlan(compileAgent(s))
+    expect(out).toContain('env("TOOL_PROMPT")')
+  })
+
+  it('renders ref() prompt with its path', () => {
+    const s = agent('ref-prompt', {
+      system: 'hi',
+      tools: [tool('do-thing', { prompt: ref('prompts.doThing') })],
+    })
+    const out = formatAgentPlan(compileAgent(s))
+    expect(out).toContain('ref("prompts.doThing")')
   })
 
   it('shows (no commands defined) when tools list is empty', () => {
@@ -520,6 +550,26 @@ describe('runAgentStep()', () => {
     }))
     const result = runAgentStep(p, { text: '/set count="abc"', source: 'llm' })
     expect(result.candidates[0]!.validation?.valid).toBe(false)
+  })
+
+  it('errors on empty-string number arg (not coerced to 0)', () => {
+    const p = compileAgent(agent('a', {
+      system: 'hi',
+      tools: [tool('set', { source: 'llm', args: { count: { type: 'number' } } })],
+    }))
+    const result = runAgentStep(p, { text: '/set count=""', source: 'llm' })
+    expect(result.candidates[0]!.validation?.valid).toBe(false)
+    expect(result.candidates[0]!.args['count']).not.toBe(0)
+  })
+
+  it('errors on whitespace-only number arg (not coerced to 0)', () => {
+    const p = compileAgent(agent('a', {
+      system: 'hi',
+      tools: [tool('set', { source: 'llm', args: { count: { type: 'number' } } })],
+    }))
+    const result = runAgentStep(p, { text: '/set count="   "', source: 'llm' })
+    expect(result.candidates[0]!.validation?.valid).toBe(false)
+    expect(result.candidates[0]!.args['count']).not.toBe(0)
   })
 
   it('coerces boolean args (true/false)', () => {

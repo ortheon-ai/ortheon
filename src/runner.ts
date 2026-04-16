@@ -502,7 +502,8 @@ function validateArgs(
       continue
     }
     if (field.type === 'number') {
-      const n = Number(raw)
+      const trimmed = raw.trim()
+      const n = trimmed === '' ? NaN : Number(trimmed)
       if (isNaN(n)) {
         errors.push(`arg "${fieldName}" expected number, got "${raw}"`)
         coerced[fieldName] = raw
