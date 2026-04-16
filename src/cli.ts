@@ -60,12 +60,12 @@ if (needsTsx) {
 
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
-import { compile, compileAgent, formatExpandedPlan, formatAgentPlan, formatAgentSpec } from './compiler.js'
+import { compile, formatExpandedPlan, formatAgentSpec } from './compiler.js'
 import { validate, validateAgent } from './validator.js'
 import { runSpec, runPlan } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
 import { resolveGlob, loadSpecFile } from './loader.js'
-import type { AgentSpec, ExecutionPlan, Spec, SpecResult } from './types.js'
+import type { ExecutionPlan, Spec, SpecResult } from './types.js'
 
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf-8')
@@ -196,7 +196,6 @@ program
     }
 
     if (loaded.kind === 'agent') {
-      const agentPlan = compileAgent(loaded.spec)
       const validation = validateAgent(loaded.spec)
       if (!validation.valid) {
         console.error('Validation errors:')
