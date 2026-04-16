@@ -295,12 +295,21 @@ export type ConversationTool = {
   prompt?: Resolvable<string>  // injected instruction returned to the caller on dispatch
 }
 
+// Named group of tools for sharing across agents.
+// The compiler flattens toolsets into the flat SerializedTool[] in AgentPlan.
+// The name is kebab-case and appears in ortheon expand output only (not in the plan).
+export type Toolset = {
+  __type: 'toolset'
+  name: string
+  tools: ConversationTool[]
+}
+
 export type AgentSpec = {
   __type: 'agent'
   name: string
   // env() is allowed; secret() is structurally valid but triggers a validator warning
   system: Resolvable<string>
-  tools: ConversationTool[]
+  tools: Array<ConversationTool | Toolset>
 }
 
 // ---------------------------------------------------------------------------

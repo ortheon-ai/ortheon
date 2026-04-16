@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { agent, tool, env, secret, ref } from '../src/dsl.js'
-import { compileAgent, formatAgentPlan, formatCommandReference } from '../src/compiler.js'
-import { validateAgent } from '../src/validator.js'
+import { agent, tool, toolset, env, secret, ref } from '../src/dsl.js'
+import { compileAgent, formatAgentPlan, formatAgentSpec, formatCommandReference } from '../src/compiler.js'
+import { validateAgent, validateToolset } from '../src/validator.js'
 import { runAgentStep } from '../src/runner.js'
 import { createApp, type ServerSuite } from '../src/server/app.js'
-import type { AgentSpec, AgentPlan } from '../src/types.js'
+import type { AgentSpec, AgentPlan, ConversationTool } from '../src/types.js'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -60,7 +60,7 @@ describe('agent() / tool() DSL', () => {
   })
 
   it('tool() preserves name, source, args, prompt', () => {
-    const t = minimalAgentSpec.tools[0]!
+    const t = minimalAgentSpec.tools[0]! as ConversationTool
     expect(t.name).toBe('create-issue')
     expect(t.source).toBe('llm')
     expect(t.args).toBeDefined()
@@ -68,7 +68,7 @@ describe('agent() / tool() DSL', () => {
   })
 
   it('tool() preserves aliases', () => {
-    const t = minimalAgentSpec.tools[1]!
+    const t = minimalAgentSpec.tools[1]! as ConversationTool
     expect(t.aliases).toEqual(['docs'])
   })
 
@@ -280,6 +280,229 @@ describe('formatAgentPlan()', () => {
     const s = agent('empty', { system: 'hi', tools: [] })
     const out = formatAgentPlan(compileAgent(s))
     expect(out).toContain('(no commands defined)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// toolset() DSL
+// ---------------------------------------------------------------------------
+
+describe('toolset() DSL', () => {
+  it('produces __type: toolset', () => {
+    const ts = toolset('support', [tool('escalate', {})])
+    expect(ts.__type).toBe('toolset')
+  })
+
+  it('preserves name and tools', () => {
+    const t = tool('lookup-docs', { source: 'any', args: { query: { type: 'string', required: true } } })
+    const ts = toolset('shared', [t])
+    expect(ts.name).toBe('shared')
+    expect(ts.tools).toHaveLength(1)
+    expect(ts.tools[0]!.name).toBe('lookup-docs')
+  })
+
+  it('agent() accepts toolset entries in tools array', () => {
+    const ts = toolset('support', [tool('escalate', { source: 'llm' })])
+    const s = agent('bot', { system: 'hi', tools: [ts, tool('create-issue', {})] })
+    expect(s.tools).toHaveLength(2)
+    expect((s.tools[0] as { __type: string }).__type).toBe('toolset')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// compileAgent() with toolsets
+// ---------------------------------------------------------------------------
+
+describe('compileAgent() with toolsets', () => {
+  it('flattens a toolset into the plan tools array', () => {
+    const ts = toolset('support', [
+      tool('lookup-docs', { source: 'any', args: { query: { type: 'string', required: true } } }),
+      tool('escalate', { source: 'llm', prompt: 'Transfer to a human agent.' }),
+    ])
+    const s = agent('triage', {
+      system: 'You are a triage bot.',
+      tools: [ts, tool('create-issue', { source: 'llm' })],
+    })
+    const plan = compileAgent(s)
+    expect(plan.tools).toHaveLength(3)
+    expect(plan.tools.map(t => t.name)).toEqual(['lookup-docs', 'escalate', 'create-issue'])
+  })
+
+  it('defaults source for toolset tools the same as inline tools', () => {
+    const ts = toolset('shared', [tool('cmd', {})])
+    const s = agent('bot', { system: 'hi', tools: [ts] })
+    const plan = compileAgent(s)
+    expect(plan.tools[0]!.source).toBe('llm')
+  })
+
+  it('includes toolset tools in commandReference', () => {
+    const ts = toolset('support', [tool('escalate', {})])
+    const s = agent('bot', { system: 'hi', tools: [ts] })
+    const plan = compileAgent(s)
+    expect(plan.commandReference).toContain('/escalate')
+  })
+
+  it('handles multiple toolsets', () => {
+    const ts1 = toolset('support', [tool('escalate', {})])
+    const ts2 = toolset('docs', [tool('lookup-docs', {})])
+    const s = agent('bot', { system: 'hi', tools: [ts1, ts2] })
+    const plan = compileAgent(s)
+    expect(plan.tools.map(t => t.name)).toEqual(['escalate', 'lookup-docs'])
+  })
+
+  it('flattens toolsets alongside inline tools in correct order', () => {
+    const ts = toolset('shared', [tool('b', {}), tool('c', {})])
+    const s = agent('bot', { system: 'hi', tools: [tool('a', {}), ts, tool('d', {})] })
+    const plan = compileAgent(s)
+    expect(plan.tools.map(t => t.name)).toEqual(['a', 'b', 'c', 'd'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// formatAgentSpec() with toolsets
+// ---------------------------------------------------------------------------
+
+describe('formatAgentSpec()', () => {
+  it('renders agent name and system', () => {
+    const s = agent('triage', { system: 'You are a triage bot.', tools: [] })
+    const out = formatAgentSpec(s)
+    expect(out).toContain('Agent: triage')
+    expect(out).toContain('triage bot')
+  })
+
+  it('renders inline tools without toolset header', () => {
+    const s = agent('bot', {
+      system: 'hi',
+      tools: [tool('create-issue', { source: 'llm' })],
+    })
+    const out = formatAgentSpec(s)
+    expect(out).toContain('command: create-issue')
+    expect(out).not.toContain('[toolset:')
+  })
+
+  it('renders toolset header before grouped tools', () => {
+    const ts = toolset('support', [
+      tool('escalate', { source: 'llm' }),
+      tool('lookup-docs', { source: 'any' }),
+    ])
+    const s = agent('bot', { system: 'hi', tools: [ts] })
+    const out = formatAgentSpec(s)
+    expect(out).toContain('[toolset: support]')
+    expect(out).toContain('command: escalate')
+    expect(out).toContain('command: lookup-docs')
+  })
+
+  it('renders toolset header before toolset tools and separates them from inline tools', () => {
+    const ts = toolset('shared', [tool('b', { source: 'any' })])
+    const s = agent('bot', { system: 'hi', tools: [tool('a', { source: 'llm' }), ts] })
+    const out = formatAgentSpec(s)
+    const aPos = out.indexOf('command: a')
+    const headerPos = out.indexOf('[toolset: shared]')
+    const bPos = out.indexOf('command: b')
+    expect(aPos).toBeLessThan(headerPos)
+    expect(headerPos).toBeLessThan(bPos)
+  })
+
+  it('defaults source to llm in output when not specified', () => {
+    const ts = toolset('shared', [tool('cmd', {})])
+    const s = agent('bot', { system: 'hi', tools: [ts] })
+    const out = formatAgentSpec(s)
+    expect(out).toContain('source: llm')
+  })
+
+  it('shows (no commands defined) when tools list is empty', () => {
+    const s = agent('empty', { system: 'hi', tools: [] })
+    const out = formatAgentSpec(s)
+    expect(out).toContain('(no commands defined)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// validateToolset()
+// ---------------------------------------------------------------------------
+
+describe('validateToolset()', () => {
+  it('passes a valid toolset', () => {
+    const ts = toolset('support', [
+      tool('escalate', { source: 'llm' }),
+      tool('lookup-docs', { source: 'any', args: { query: { type: 'string', required: true } } }),
+    ])
+    const result = validateToolset(ts)
+    expect(result.valid).toBe(true)
+    expect(result.errors).toHaveLength(0)
+  })
+
+  it('errors on non-kebab-case toolset name', () => {
+    const ts = toolset('My Toolset', [])
+    const result = validateToolset(ts)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('toolset name'))).toBe(true)
+  })
+
+  it('errors on non-kebab-case tool name inside toolset', () => {
+    const ts = toolset('valid-name', [tool('Bad_Name', {})])
+    const result = validateToolset(ts)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('Bad_Name'))).toBe(true)
+  })
+
+  it('errors on duplicate tool names within a toolset', () => {
+    const ts = toolset('dupe', [tool('same', {}), tool('same', {})])
+    const result = validateToolset(ts)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('Duplicate'))).toBe(true)
+  })
+
+  it('passes with an empty tools array', () => {
+    const ts = toolset('empty-set', [])
+    const result = validateToolset(ts)
+    expect(result.valid).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// validateAgent() with toolsets
+// ---------------------------------------------------------------------------
+
+describe('validateAgent() with toolsets', () => {
+  it('passes an agent using a valid toolset', () => {
+    const ts = toolset('support', [tool('escalate', {})])
+    const s = agent('bot', { system: 'hi', tools: [ts] })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(true)
+  })
+
+  it('errors on toolset with non-kebab-case name', () => {
+    const ts = toolset('Bad Name', [])
+    const s = agent('bot', { system: 'hi', tools: [ts] })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('toolset name'))).toBe(true)
+  })
+
+  it('catches cross-toolset duplicate tool names', () => {
+    const ts1 = toolset('first', [tool('shared-cmd', {})])
+    const ts2 = toolset('second', [tool('shared-cmd', {})])
+    const s = agent('bot', { system: 'hi', tools: [ts1, ts2] })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('Duplicate') && e.message.includes('shared-cmd'))).toBe(true)
+  })
+
+  it('catches duplicate between inline tool and toolset tool', () => {
+    const ts = toolset('shared', [tool('dup', {})])
+    const s = agent('bot', { system: 'hi', tools: [tool('dup', {}), ts] })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('Duplicate') && e.message.includes('dup'))).toBe(true)
+  })
+
+  it('validates tool definitions inside toolsets', () => {
+    const ts = toolset('bad-tools', [tool('ok', { source: 'invalid-src' as 'llm' })])
+    const s = agent('bot', { system: 'hi', tools: [ts] })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('invalid source'))).toBe(true)
   })
 })
 

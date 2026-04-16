@@ -60,7 +60,7 @@ if (needsTsx) {
 
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
-import { compile, compileAgent, formatExpandedPlan, formatAgentPlan } from './compiler.js'
+import { compile, compileAgent, formatExpandedPlan, formatAgentPlan, formatAgentSpec } from './compiler.js'
 import { validate, validateAgent } from './validator.js'
 import { runSpec, runPlan } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
@@ -211,7 +211,7 @@ program
         }
         console.warn('')
       }
-      console.log(formatAgentPlan(agentPlan))
+      console.log(formatAgentSpec(loaded.spec))
       process.exit(validation.valid ? 0 : 1)
     }
 

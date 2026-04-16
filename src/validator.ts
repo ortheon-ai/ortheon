@@ -3,6 +3,7 @@ import type {
   ApiStep,
   ArgType,
   BrowserStep,
+  ConversationTool,
   Diagnostic,
   ExecutableStep,
   ExecutionPlan,
@@ -16,6 +17,7 @@ import type {
   Section,
   Spec,
   Step,
+  Toolset,
   UseStep,
   ValidationResult,
 } from './types.js'
@@ -494,6 +496,110 @@ const KEBAB_RE = /^[a-z0-9][a-z0-9-]*$/
 const VALID_SOURCES = new Set<MatchSource>(['user', 'llm', 'tool', 'any'])
 const VALID_ARG_TYPES = new Set<ArgType>(['string', 'number', 'boolean'])
 
+// ---------------------------------------------------------------------------
+// Per-tool validation (shared by validateAgent and validateToolset)
+// ---------------------------------------------------------------------------
+
+function validateTool(
+  t: ConversationTool,
+  allIdentifiers: Set<string>,
+  errors: Diagnostic[],
+  warnings: Diagnostic[],
+): void {
+  if (!KEBAB_RE.test(t.name)) {
+    errors.push({
+      severity: 'error',
+      message: `tool name "${t.name}" must be kebab-case (lowercase letters, digits, hyphens; must start with a letter or digit)`,
+    })
+  }
+
+  if (allIdentifiers.has(t.name)) {
+    errors.push({
+      severity: 'error',
+      message: `Duplicate command identifier: "${t.name}" (conflicts with another tool name or alias)`,
+    })
+  } else {
+    allIdentifiers.add(t.name)
+  }
+
+  for (const alias of t.aliases ?? []) {
+    if (!KEBAB_RE.test(alias)) {
+      errors.push({
+        severity: 'error',
+        message: `tool("${t.name}") alias "${alias}" must be kebab-case`,
+      })
+    }
+    if (allIdentifiers.has(alias)) {
+      errors.push({
+        severity: 'error',
+        message: `Duplicate command identifier: "${alias}" (alias of tool "${t.name}" conflicts with another tool name or alias)`,
+      })
+    } else {
+      allIdentifiers.add(alias)
+    }
+  }
+
+  if (t.source !== undefined && !VALID_SOURCES.has(t.source)) {
+    errors.push({
+      severity: 'error',
+      message: `tool("${t.name}") has invalid source "${t.source}". Valid values: user, llm, tool, any`,
+    })
+  }
+
+  if (
+    t.prompt !== undefined &&
+    typeof t.prompt === 'object' &&
+    t.prompt !== null &&
+    '__type' in (t.prompt as object) &&
+    (t.prompt as { __type: string }).__type === 'secret'
+  ) {
+    warnings.push({
+      severity: 'warning',
+      message: `tool("${t.name}") prompt uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
+    })
+  }
+
+  if (t.args) {
+    for (const [fieldName, field] of Object.entries(t.args)) {
+      if (!KEBAB_RE.test(fieldName)) {
+        errors.push({
+          severity: 'error',
+          message: `tool("${t.name}") arg "${fieldName}" must be kebab-case`,
+        })
+      }
+      if (!VALID_ARG_TYPES.has(field.type as ArgType)) {
+        errors.push({
+          severity: 'error',
+          message: `tool("${t.name}") arg "${fieldName}" has invalid type "${field.type}". Valid types: string, number, boolean`,
+        })
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// validateToolset: standalone validation for a named tool group
+// ---------------------------------------------------------------------------
+
+export function validateToolset(ts: Toolset): ValidationResult {
+  const errors: Diagnostic[] = []
+  const warnings: Diagnostic[] = []
+
+  if (!KEBAB_RE.test(ts.name)) {
+    errors.push({
+      severity: 'error',
+      message: `toolset name "${ts.name}" must be kebab-case`,
+    })
+  }
+
+  const allIdentifiers = new Set<string>()
+  for (const t of ts.tools) {
+    validateTool(t, allIdentifiers, errors, warnings)
+  }
+
+  return { valid: errors.length === 0, errors, warnings }
+}
+
 export function validateAgent(spec: AgentSpec): ValidationResult {
   const errors: Diagnostic[] = []
   const warnings: Diagnostic[] = []
@@ -521,84 +627,25 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
     })
   }
 
-  // Build a global identifier registry (names + aliases) for uniqueness checks
+  // Build a global identifier registry across all tools and toolsets
   const allIdentifiers = new Set<string>()
 
-  for (const t of spec.tools) {
-    // Tool name must be kebab-case
-    if (!KEBAB_RE.test(t.name)) {
-      errors.push({
-        severity: 'error',
-        message: `tool name "${t.name}" must be kebab-case (lowercase letters, digits, hyphens; must start with a letter or digit)`,
-      })
-    }
-
-    // Tool name must be globally unique
-    if (allIdentifiers.has(t.name)) {
-      errors.push({
-        severity: 'error',
-        message: `Duplicate command identifier: "${t.name}" (conflicts with another tool name or alias)`,
-      })
+  for (const entry of spec.tools) {
+    if ('__type' in entry && entry.__type === 'toolset') {
+      // Validate toolset name
+      if (!KEBAB_RE.test(entry.name)) {
+        errors.push({
+          severity: 'error',
+          message: `toolset name "${entry.name}" must be kebab-case`,
+        })
+      }
+      // Validate each tool in the toolset (using the shared identifier registry
+      // so cross-toolset duplicates are caught)
+      for (const t of entry.tools) {
+        validateTool(t, allIdentifiers, errors, warnings)
+      }
     } else {
-      allIdentifiers.add(t.name)
-    }
-
-    // Aliases must be kebab-case and globally unique
-    for (const alias of t.aliases ?? []) {
-      if (!KEBAB_RE.test(alias)) {
-        errors.push({
-          severity: 'error',
-          message: `tool("${t.name}") alias "${alias}" must be kebab-case`,
-        })
-      }
-      if (allIdentifiers.has(alias)) {
-        errors.push({
-          severity: 'error',
-          message: `Duplicate command identifier: "${alias}" (alias of tool "${t.name}" conflicts with another tool name or alias)`,
-        })
-      } else {
-        allIdentifiers.add(alias)
-      }
-    }
-
-    // Source must be valid when specified
-    if (t.source !== undefined && !VALID_SOURCES.has(t.source)) {
-      errors.push({
-        severity: 'error',
-        message: `tool("${t.name}") has invalid source "${t.source}". Valid values: user, llm, tool, any`,
-      })
-    }
-
-    // Warn if prompt uses secret()
-    if (
-      t.prompt !== undefined &&
-      typeof t.prompt === 'object' &&
-      t.prompt !== null &&
-      '__type' in (t.prompt as object) &&
-      (t.prompt as { __type: string }).__type === 'secret'
-    ) {
-      warnings.push({
-        severity: 'warning',
-        message: `tool("${t.name}") prompt uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
-      })
-    }
-
-    // ArgSpec field names and types
-    if (t.args) {
-      for (const [fieldName, field] of Object.entries(t.args)) {
-        if (!KEBAB_RE.test(fieldName)) {
-          errors.push({
-            severity: 'error',
-            message: `tool("${t.name}") arg "${fieldName}" must be kebab-case`,
-          })
-        }
-        if (!VALID_ARG_TYPES.has(field.type as ArgType)) {
-          errors.push({
-            severity: 'error',
-            message: `tool("${t.name}") arg "${fieldName}" has invalid type "${field.type}". Valid types: string, number, boolean`,
-          })
-        }
-      }
+      validateTool(entry as ConversationTool, allIdentifiers, errors, warnings)
     }
   }
 

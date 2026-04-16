@@ -4,6 +4,7 @@ import type {
   ApiContract,
   ApiStep,
   BrowserStep,
+  ConversationTool,
   ExecutableStep,
   ExecutionPlan,
   ExpectStep,
@@ -16,6 +17,7 @@ import type {
   SerializedTool,
   Spec,
   Step,
+  Toolset,
   UseStep,
 } from './types.js'
 
@@ -368,8 +370,20 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
 //   - Passes aliases, args, prompt, and system through unchanged
 // ---------------------------------------------------------------------------
 
+function flattenTools(entries: AgentSpec['tools']): ConversationTool[] {
+  const result: ConversationTool[] = []
+  for (const entry of entries) {
+    if ('__type' in entry && entry.__type === 'toolset') {
+      result.push(...entry.tools)
+    } else {
+      result.push(entry as ConversationTool)
+    }
+  }
+  return result
+}
+
 export function compileAgent(spec: AgentSpec): AgentPlan {
-  const tools: SerializedTool[] = spec.tools.map(t => ({
+  const tools: SerializedTool[] = flattenTools(spec.tools).map(t => ({
     name: t.name,
     ...(t.aliases !== undefined ? { aliases: t.aliases } : {}),
     source: t.source ?? 'llm',
@@ -470,7 +484,7 @@ export function formatAgentPlan(plan: AgentPlan): string {
       lines.push(`    args: ${argParts.join(', ')}`)
     }
 
-    if (t.prompt) {
+    if (t.prompt !== undefined) {
       const promptStr = typeof t.prompt === 'string'
         ? t.prompt.trim()
         : formatResolvable(t.prompt)
@@ -478,6 +492,62 @@ export function formatAgentPlan(plan: AgentPlan): string {
     }
 
     lines.push('')
+  }
+
+  return lines.join('\n').trimEnd()
+}
+
+function formatToolEntry(t: ConversationTool, lines: string[]): void {
+  const source = t.source ?? 'llm'
+  const aliasesSuffix = t.aliases && t.aliases.length > 0 ? `   aliases: ${t.aliases.join(', ')}` : ''
+  lines.push(`  command: ${t.name}   source: ${source}${aliasesSuffix}`)
+
+  if (t.args && Object.keys(t.args).length > 0) {
+    const argParts = Object.entries(t.args).map(([k, f]) => {
+      const req = f.required ? ', required' : ''
+      return `${k} (${f.type}${req})`
+    })
+    lines.push(`    args: ${argParts.join(', ')}`)
+  }
+
+  if (t.prompt !== undefined) {
+    const promptStr = typeof t.prompt === 'string'
+      ? t.prompt.trim()
+      : formatResolvable(t.prompt)
+    lines.push(`    prompt: ${promptStr}`)
+  }
+
+  lines.push('')
+}
+
+// Renders an AgentSpec with toolset groupings visible. Used by ortheon expand
+// so provenance is shown even though the compiled AgentPlan is flat.
+export function formatAgentSpec(spec: AgentSpec): string {
+  const lines: string[] = []
+
+  lines.push(`Agent: ${spec.name}`)
+  lines.push(`System prompt: ${formatResolvable(spec.system)}`)
+  lines.push('')
+
+  const allEntries = spec.tools
+  if (allEntries.length === 0) {
+    lines.push('  (no commands defined)')
+    return lines.join('\n')
+  }
+
+  lines.push('  Arg syntax: /command key="value" ...')
+  lines.push('')
+
+  for (const entry of allEntries) {
+    if ('__type' in entry && (entry as Toolset).__type === 'toolset') {
+      const ts = entry as Toolset
+      lines.push(`  [toolset: ${ts.name}]`)
+      for (const t of ts.tools) {
+        formatToolEntry(t, lines)
+      }
+    } else {
+      formatToolEntry(entry as ConversationTool, lines)
+    }
   }
 
   return lines.join('\n').trimEnd()

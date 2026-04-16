@@ -7,7 +7,7 @@ Declarative behavioral spec framework. Two executable primitives: `browser(...)`
 ```
 src/
   types.ts           Type system (all types in one file)
-  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret, bearer, existsCheck
+  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret, bearer, existsCheck, agent, tool, toolset
   compiler.ts        Expand use(), resolve contracts, flatten sections → ExecutionPlan
   validator.ts       Two-pass validation (structural on AST, ref resolution on expanded plan)
   runner.ts          Sequential step execution with retry, save, assert; runSpec() + runPlan()
@@ -79,6 +79,7 @@ Do this on every change, no matter how small. Never skip to implementation witho
 - Inline `expect.body` existence checks use `existsCheck()`, not the string `"exists"`.
 - `save` is uniform: same `{ name: "path" }` shape in both browser and API steps.
 - Reusable flows declare their inputs. `flow(name, { inputs, steps })` -- one shape, no overloads.
+- Reusable tool groups use `toolset(name, tools[])`. Toolsets are flattened to a flat command table at compile time. No `use()` analog -- tools have no compile-time input binding.
 - `section` is cosmetic grouping only -- not reusable, not independently executable.
 - Contract body shapes are documentation only -- not schema-validated.
 - Verification of DB state, logs, events, etc. happens through HTTP verification endpoints, not DSL extensions.

@@ -133,7 +133,7 @@ export default agent("bug-reports", {
 | Field | Type | Description |
 |---|---|---|
 | `system` | `string \| EnvValue` | System prompt for the LLM. Use `env()`. See [System prompt guidelines](#system-prompt-guidelines). |
-| `tools` | `ConversationTool[]` | Declared commands. |
+| `tools` | `Array<ConversationTool \| Toolset>` | Declared commands. Toolsets are flattened to a flat command table at compile time. |
 
 ### `tool(name, config)`
 
@@ -166,6 +166,99 @@ tool("create-issue", {
 | `'user'` | Command is triggered by user messages only |
 | `'tool'` | Command is triggered by tool result messages only |
 | `'any'` | Command is triggered by any source |
+
+### `toolset(name, tools)`
+
+Creates a named, shareable group of tools. Toolsets are the primary mechanism for sharing tools across multiple agent specs.
+
+```ts
+// tools/support.ts
+export const supportTools = toolset("support", [
+  tool("lookup-docs", {
+    source: "any",
+    args: { query: { type: "string", required: true } },
+  }),
+  tool("escalate", {
+    source: "llm",
+    prompt: "Transfer the conversation to a human agent.",
+  }),
+])
+```
+
+Import and include it in an agent's `tools` array:
+
+```ts
+// agents/triage.ts
+import { supportTools } from "../tools/support.js"
+
+export default agent("triage", {
+  system: "You are a triage bot.",
+  tools: [supportTools, tool("create-issue", { ... })],
+})
+```
+
+The compiler flattens toolsets into the flat `SerializedTool[]` in the compiled `AgentPlan`. The toolset name does not appear in the plan or in `commandReference` — it is authoring-time metadata only, visible in `ortheon expand` output.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | kebab-case identifier for the group. Appears in `ortheon expand` output. |
+| `tools` | `ConversationTool[]` | The tools in this group. |
+
+**Multiple toolsets** can be mixed with inline tools in any order:
+
+```ts
+tools: [ts1, tool("inline-a", { ... }), ts2, tool("inline-b", { ... })]
+```
+
+The flattened order in the plan follows the declaration order.
+
+**Cross-toolset name conflicts** are caught by `validateAgent()` — the uniqueness check spans all toolsets and inline tools in a single pass.
+
+---
+
+### Tool sharing patterns
+
+There are three ways to share tool definitions across agent specs:
+
+**1. Named toolset (primary)**
+
+```ts
+export const supportTools = toolset("support", [
+  tool("lookup-docs", { ... }),
+  tool("escalate", { ... }),
+])
+```
+
+Use when tools logically belong together and you want to see their group in `ortheon expand` output.
+
+**2. Individual tool exports**
+
+```ts
+export const lookupDocsTool = tool("lookup-docs", { ... })
+export const escalateTool = tool("escalate", { ... })
+
+// In agent:
+tools: [lookupDocsTool, escalateTool, tool("create-issue", { ... })]
+```
+
+Use when you want to pick individual tools from a larger library.
+
+**3. Factory functions for parameterized variants**
+
+```ts
+export const makeSearchTool = (domain: string) =>
+  tool(`search-${domain}`, {
+    args: { query: { type: "string", required: true } },
+    prompt: `Search the ${domain} knowledge base.`,
+  })
+
+// In agent:
+tools: [makeSearchTool("docs"), makeSearchTool("api")]
+```
+
+Use when the same tool shape is needed with different names or prompts per agent. This is plain TypeScript — no new DSL is required.
+
+---
 
 ### `ArgSpec`
 
@@ -354,7 +447,26 @@ When the tool list is empty, `commandReference` is an empty string.
 
 ### `ortheon expand <file>`
 
-Prints the command table for an agent spec file:
+Prints the command table for an agent spec file. When the spec uses toolsets, they are shown as named groups:
+
+```
+Agent: triage
+System prompt: You are a triage bot...
+
+  Arg syntax: /command key="value" ...
+
+  [toolset: support]
+  command: lookup-docs    source: any
+    args: query (string, required)
+  command: escalate       source: llm
+    prompt: Transfer the conversation to a human agent.
+
+  command: create-issue   source: llm
+    args: title (string, required), priority (string)
+    prompt: Create a GitHub issue with the title and priority provided.
+```
+
+When no toolsets are used:
 
 ```
 Agent: bug-reports
@@ -389,11 +501,12 @@ Validation errors and warnings print above the table.
 |---|---|
 | `system` is an empty string | `agent system prompt must not be empty` |
 | Tool name is not kebab-case | `tool name "..." must be kebab-case` |
-| Duplicate tool name or alias across all tools | `Duplicate command identifier: "..."` |
+| Duplicate tool name or alias across all tools (including cross-toolset) | `Duplicate command identifier: "..."` |
 | Alias is not kebab-case | `tool("...") alias "..." must be kebab-case` |
 | `source` is not a valid value | `tool("...") has invalid source "..."` |
 | Arg field name is not kebab-case | `tool("...") arg "..." must be kebab-case` |
 | Arg field type is not `string`, `number`, or `boolean` | `tool("...") arg "..." has invalid type "..."` |
+| Toolset name is not kebab-case | `toolset name "..." must be kebab-case` |
 
 **Warnings:**
 
@@ -401,7 +514,22 @@ Validation errors and warnings print above the table.
 |---|---|
 | `system` uses `secret()` | `agent system prompt uses secret() -- ...leakage risk...` |
 
-The validator catches name/alias conflicts globally across all tools in a single pass. A tool name cannot be the same as another tool's name or any tool's alias.
+The validator catches name/alias conflicts globally across all tools and toolsets in a single pass. A tool name cannot be the same as another tool's name or any tool's alias, regardless of which toolset it belongs to.
+
+### `validateToolset(toolset)`
+
+Validates a toolset standalone, before it is composed into an agent. Useful for library authors shipping shared tool groups.
+
+```ts
+import { validateToolset } from "ortheon"
+
+const result = validateToolset(supportTools)
+if (!result.valid) {
+  console.error(result.errors)
+}
+```
+
+Runs the same per-tool checks as `validateAgent()`, plus the toolset name must be kebab-case. The uniqueness check is scoped to the toolset in isolation — cross-toolset conflicts are caught by `validateAgent()` when the toolset is composed.
 
 ---
 

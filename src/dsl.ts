@@ -28,6 +28,7 @@ import type {
   SpecSafety,
   Step,
   StepAction,
+  Toolset,
   UseStep,
 } from './types.js'
 
@@ -213,9 +214,13 @@ export function tool(name: string, config: ConversationToolConfig): Conversation
   }
 }
 
+export function toolset(name: string, tools: ConversationTool[]): Toolset {
+  return { __type: 'toolset', name, tools }
+}
+
 export type AgentConfig = {
   system: Resolvable<string>
-  tools: ConversationTool[]
+  tools: Array<ConversationTool | Toolset>
 }
 
 export function agent(name: string, config: AgentConfig): AgentSpec {
@@ -231,4 +236,4 @@ export function agent(name: string, config: AgentConfig): AgentSpec {
 // Re-export types for spec file convenience
 // ---------------------------------------------------------------------------
 
-export type { AgentSpec, ArgField, ArgSpec, ArgType, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, MatchSource, Spec, SpecExpectedOutcome, Step, Section, ApiContract } from './types.js'
+export type { AgentSpec, ArgField, ArgSpec, ArgType, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, MatchSource, Spec, SpecExpectedOutcome, Step, Section, ApiContract, Toolset } from './types.js'
