@@ -473,34 +473,15 @@ export function formatAgentPlan(plan: AgentPlan): string {
   lines.push('')
 
   for (const t of plan.tools) {
-    const aliasesSuffix = t.aliases && t.aliases.length > 0 ? `   aliases: ${t.aliases.join(', ')}` : ''
-    lines.push(`  command: ${t.name}   source: ${t.source}${aliasesSuffix}`)
-
-    if (t.args && Object.keys(t.args).length > 0) {
-      const argParts = Object.entries(t.args).map(([k, f]) => {
-        const req = f.required ? ', required' : ''
-        return `${k} (${f.type}${req})`
-      })
-      lines.push(`    args: ${argParts.join(', ')}`)
-    }
-
-    if (t.prompt !== undefined) {
-      const promptStr = typeof t.prompt === 'string'
-        ? t.prompt.trim()
-        : formatResolvable(t.prompt)
-      lines.push(`    prompt: ${promptStr}`)
-    }
-
-    lines.push('')
+    formatSerializedTool(t, lines)
   }
 
   return lines.join('\n').trimEnd()
 }
 
-function formatToolEntry(t: ConversationTool, lines: string[]): void {
-  const source = t.source ?? 'llm'
+function formatSerializedTool(t: SerializedTool, lines: string[]): void {
   const aliasesSuffix = t.aliases && t.aliases.length > 0 ? `   aliases: ${t.aliases.join(', ')}` : ''
-  lines.push(`  command: ${t.name}   source: ${source}${aliasesSuffix}`)
+  lines.push(`  command: ${t.name}   source: ${t.source}${aliasesSuffix}`)
 
   if (t.args && Object.keys(t.args).length > 0) {
     const argParts = Object.entries(t.args).map(([k, f]) => {
@@ -518,6 +499,10 @@ function formatToolEntry(t: ConversationTool, lines: string[]): void {
   }
 
   lines.push('')
+}
+
+function formatToolEntry(t: ConversationTool, lines: string[]): void {
+  formatSerializedTool({ ...t, source: t.source ?? 'llm' }, lines)
 }
 
 // Renders an AgentSpec with toolset groupings visible. Used by ortheon expand
