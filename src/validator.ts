@@ -569,6 +569,20 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
       })
     }
 
+    // Warn if prompt uses secret()
+    if (
+      t.prompt !== undefined &&
+      typeof t.prompt === 'object' &&
+      t.prompt !== null &&
+      '__type' in (t.prompt as object) &&
+      (t.prompt as { __type: string }).__type === 'secret'
+    ) {
+      warnings.push({
+        severity: 'warning',
+        message: `tool("${t.name}") prompt uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
+      })
+    }
+
     // ArgSpec field names and types
     if (t.args) {
       for (const [fieldName, field] of Object.entries(t.args)) {

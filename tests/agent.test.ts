@@ -314,6 +314,34 @@ describe('validateAgent()', () => {
     expect(result.warnings).toHaveLength(0)
   })
 
+  it('warns on secret() in tool prompt', () => {
+    const s = agent('secret-prompt', {
+      system: 'hi',
+      tools: [tool('cmd', { prompt: secret('TOOL_PROMPT') })],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(true)
+    expect(result.warnings.some(w => w.message.includes('leakage risk') && w.message.includes('cmd'))).toBe(true)
+  })
+
+  it('does not warn on env() in tool prompt', () => {
+    const s = agent('env-prompt', {
+      system: 'hi',
+      tools: [tool('cmd', { prompt: env('TOOL_PROMPT') })],
+    })
+    const result = validateAgent(s)
+    expect(result.warnings).toHaveLength(0)
+  })
+
+  it('does not warn on string tool prompt', () => {
+    const s = agent('str-prompt', {
+      system: 'hi',
+      tools: [tool('cmd', { prompt: 'Do something.' })],
+    })
+    const result = validateAgent(s)
+    expect(result.warnings).toHaveLength(0)
+  })
+
   it('errors on duplicate tool names', () => {
     const s = agent('dup', {
       system: 'hi',
