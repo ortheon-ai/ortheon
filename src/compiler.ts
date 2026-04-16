@@ -1,4 +1,6 @@
 import type {
+  AgentPlan,
+  AgentSpec,
   ApiContract,
   ApiStep,
   BrowserStep,
@@ -11,6 +13,7 @@ import type {
   InlineExpect,
   Resolvable,
   Section,
+  SerializedTool,
   Spec,
   Step,
   UseStep,
@@ -355,6 +358,67 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
   }
 
   return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Agent compiler
+//
+// Transforms an AgentSpec into an AgentPlan:
+//   - Serializes RegExp patterns to { source, flags } for JSON-safe transport
+//   - Passes through system, description, prompt unchanged
+// ---------------------------------------------------------------------------
+
+export function compileAgent(spec: AgentSpec): AgentPlan {
+  const tools: SerializedTool[] = spec.tools.map(t => ({
+    name: t.name,
+    match: t.match.map(m => ({
+      source: m.source,
+      pattern: m.pattern.source,
+      flags: m.pattern.flags,
+    })),
+    ...(t.description !== undefined ? { description: t.description } : {}),
+    ...(t.prompt !== undefined ? { prompt: t.prompt } : {}),
+  }))
+
+  return {
+    specName: spec.name,
+    system: spec.system,
+    tools,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent plan formatter
+// ---------------------------------------------------------------------------
+
+export function formatAgentPlan(plan: AgentPlan): string {
+  const lines: string[] = []
+
+  const systemStr = typeof plan.system === 'string'
+    ? plan.system
+    : `${(plan.system as { __type: string; name?: string }).__type}("${(plan.system as { name?: string }).name ?? ''}")`
+
+  lines.push(`Agent: ${plan.specName}`)
+  lines.push(`System prompt: ${systemStr}`)
+  lines.push('')
+
+  if (plan.tools.length === 0) {
+    lines.push('  (no tools defined)')
+    return lines.join('\n')
+  }
+
+  for (const t of plan.tools) {
+    lines.push(`  tool: ${t.name}`)
+    if (t.description) lines.push(`    description: ${t.description}`)
+    if (t.prompt) lines.push(`    prompt: ${t.prompt.trim()}`)
+    for (let i = 0; i < t.match.length; i++) {
+      const m = t.match[i]!
+      lines.push(`    match[${i}]: source=${m.source}  /${m.pattern}/${m.flags}`)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n').trimEnd()
 }
 
 function formatAction(action: ExecutableStep['action']): string {

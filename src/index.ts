@@ -18,13 +18,16 @@ export {
   bearer,
   existsCheck,
   generate,
+  // Agent spec builders
+  agent,
+  tool,
 } from './dsl.js'
 
 // Runtime
-export { runSpec, runPlan } from './runner.js'
+export { runSpec, runPlan, matchAgent } from './runner.js'
 export type { RunOptions, RunPlanOptions } from './runner.js'
-export { compile, formatExpandedPlan } from './compiler.js'
-export { validate, validateStructure, validateExpandedPlan } from './validator.js'
+export { compile, compileAgent, formatExpandedPlan, formatAgentPlan } from './compiler.js'
+export { validate, validateStructure, validateExpandedPlan, validateAgent } from './validator.js'
 export { RuntimeContext } from './context.js'
 
 // Reporters
@@ -32,6 +35,7 @@ export { consoleReport, jsonReport, consoleSummary } from './reporter.js'
 
 // Types (re-exported for spec file authoring)
 export type {
+  // Behavioral spec types
   Spec,
   SpecExpectedOutcome,
   Flow,
@@ -63,4 +67,16 @@ export type {
   FlowResult,
   ValidationResult,
   Diagnostic,
+  // Agent spec types
+  AgentSpec,
+  AgentPlan,
+  ConversationTool,
+  ToolMatch,
+  MatchSource,
+  RuntimeMessageSource,
+  SerializedTool,
+  SerializedToolMatch,
+  AgentMessage,
+  ToolCandidate,
+  AgentMatchResult,
 } from './types.js'

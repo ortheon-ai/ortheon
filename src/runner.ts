@@ -1,10 +1,14 @@
 import type {
+  AgentMatchResult,
+  AgentMessage,
+  AgentPlan,
   ExecutableStep,
   ExecutionPlan,
   ResolvedApiStep,
   Spec,
   SpecResult,
   StepResult,
+  ToolCandidate,
 } from './types.js'
 import { RuntimeContext } from './context.js'
 import { executeApiCall } from './executors/api.js'
@@ -414,6 +418,50 @@ function assertDefaultUrlIfNeeded(plan: ExecutionPlan, resolvedUrls: Record<stri
       )
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Agent matcher
+//
+// Single-turn pattern dispatch. Evaluates all tool match rules against the
+// message and returns the set of candidates. The caller owns looping, tool
+// execution, LLM calls, conversation history, and chain depth.
+//
+// Regex semantics (fixed and documented):
+//   1. Each match rule is evaluated independently against the full message.text
+//   2. A rule is tested only if source is 'any' or equals message.source
+//   3. Evaluation uses new RegExp(pattern, flags) per call — no lastIndex reuse
+//   4. A rule contributes at most one candidate (first match only)
+//   5. Captures come from the first match
+//   6. The 'g' flag has no special effect — still first match only
+//   7. One entry per tool per matching rule (multi-rule tools can produce multiple candidates)
+// ---------------------------------------------------------------------------
+
+export function matchAgent(plan: AgentPlan, message: AgentMessage): AgentMatchResult {
+  const candidates: ToolCandidate[] = []
+
+  for (const tool of plan.tools) {
+    for (let matchIndex = 0; matchIndex < tool.match.length; matchIndex++) {
+      const rule = tool.match[matchIndex]!
+
+      // Filter by source: 'any' always applies; others must match the message source
+      if (rule.source !== 'any' && rule.source !== message.source) continue
+
+      // Build a fresh RegExp per evaluation to avoid lastIndex stale state.
+      // Strip 'g' and 'y' flags to guarantee first-match-only semantics.
+      const safeFlags = rule.flags.replace(/[gy]/g, '')
+      const re = new RegExp(rule.pattern, safeFlags)
+      const match = re.exec(message.text)
+      if (match === null) continue
+
+      // Captures: everything after the full match (index 0)
+      const captures = match.slice(1).map(c => c ?? '')
+
+      candidates.push({ name: tool.name, matchIndex, captures })
+    }
+  }
+
+  return { candidates }
 }
 
 function sleep(ms: number): Promise<void> {

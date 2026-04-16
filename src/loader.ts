@@ -1,28 +1,53 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { Spec } from './types.js'
+import type { AgentSpec, Spec } from './types.js'
 
 // ---------------------------------------------------------------------------
-// Spec loader -- resolves, imports, and validates a spec file
+// Spec loader -- resolves, imports, and validates a spec file.
+//
+// Returns a discriminated union:
+//   { kind: 'spec', spec, error: null }
+//   { kind: 'agent', spec, error: null }
+//   { kind: null, spec: null, error: string }
 // ---------------------------------------------------------------------------
 
-export async function loadSpecFile(
-  file: string
-): Promise<{ spec: Spec; error: null } | { spec: null; error: string }> {
+export type LoadedSpec =
+  | { kind: 'spec'; spec: Spec; error: null }
+  | { kind: 'agent'; spec: AgentSpec; error: null }
+  | { kind: null; spec: null; error: string }
+
+export async function loadSpecFile(file: string): Promise<LoadedSpec> {
   const absPath = resolve(file)
   const fileUrl = pathToFileURL(absPath).href
   try {
-    const mod = await import(fileUrl) as { default?: Spec } | Spec
-    const s = (mod as { default?: Spec }).default ?? (mod as Spec)
-    if (!s || typeof s !== 'object' || !('flows' in s)) {
+    const mod = await import(fileUrl) as { default?: unknown } | unknown
+    const s = (mod as { default?: unknown }).default ?? mod
+
+    if (!s || typeof s !== 'object') {
       return {
+        kind: null,
         spec: null,
-        error: `File does not export a valid Ortheon spec (expected a default export from spec(...))`,
+        error: `File does not export a valid Ortheon spec or agent spec (expected a default export from spec(...) or agent(...))`,
       }
     }
-    return { spec: s, error: null }
+
+    // AgentSpec is identified by __type: 'agent'
+    if ('__type' in (s as object) && (s as { __type: string }).__type === 'agent') {
+      return { kind: 'agent', spec: s as AgentSpec, error: null }
+    }
+
+    // Behavioral spec is identified by the presence of 'flows'
+    if ('flows' in (s as object)) {
+      return { kind: 'spec', spec: s as Spec, error: null }
+    }
+
+    return {
+      kind: null,
+      spec: null,
+      error: `File does not export a valid Ortheon spec or agent spec (expected a default export from spec(...) or agent(...))`,
+    }
   } catch (err) {
-    return { spec: null, error: err instanceof Error ? err.message : String(err) }
+    return { kind: null, spec: null, error: err instanceof Error ? err.message : String(err) }
   }
 }
 

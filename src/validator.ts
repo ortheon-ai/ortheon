@@ -1,4 +1,5 @@
 import type {
+  AgentSpec,
   ApiStep,
   BrowserStep,
   Diagnostic,
@@ -7,6 +8,7 @@ import type {
   ExpectStep,
   Flow,
   FlowItem,
+  MatchSource,
   MatcherName,
   RefValue,
   ResolvedApiStep,
@@ -480,6 +482,77 @@ function checkRefsInStep(
         })
       }
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent validator
+// ---------------------------------------------------------------------------
+
+const VALID_MATCH_SOURCES = new Set<MatchSource>(['user', 'llm', 'tool', 'any'])
+
+export function validateAgent(spec: AgentSpec): ValidationResult {
+  const errors: Diagnostic[] = []
+  const warnings: Diagnostic[] = []
+
+  // system must be present and non-empty (or a dynamic value)
+  if (typeof spec.system === 'string') {
+    if (!spec.system.trim()) {
+      errors.push({
+        severity: 'error',
+        message: 'agent system prompt must not be empty',
+      })
+    }
+  } else if (typeof spec.system === 'object' && spec.system !== null && '__type' in spec.system) {
+    const dyn = spec.system as { __type: string }
+    if (dyn.__type === 'secret') {
+      warnings.push({
+        severity: 'warning',
+        message: 'agent system prompt uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.',
+      })
+    }
+  } else {
+    errors.push({
+      severity: 'error',
+      message: 'agent system prompt must be a string or a dynamic value (env(), secret())',
+    })
+  }
+
+  // Tool name uniqueness
+  const toolNames = new Set<string>()
+  for (const t of spec.tools) {
+    if (toolNames.has(t.name)) {
+      errors.push({
+        severity: 'error',
+        message: `Duplicate tool name: "${t.name}"`,
+      })
+    }
+    toolNames.add(t.name)
+
+    // Each tool must have at least one match rule
+    if (!t.match || t.match.length === 0) {
+      errors.push({
+        severity: 'error',
+        message: `tool("${t.name}") must have at least one match rule`,
+      })
+    }
+
+    // Each match rule must have a valid source
+    for (let i = 0; i < (t.match ?? []).length; i++) {
+      const m = t.match[i]!
+      if (!VALID_MATCH_SOURCES.has(m.source)) {
+        errors.push({
+          severity: 'error',
+          message: `tool("${t.name}") match[${i}] has invalid source "${m.source}". Valid values: user, llm, tool, any`,
+        })
+      }
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
   }
 }
 

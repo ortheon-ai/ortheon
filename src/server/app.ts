@@ -2,10 +2,11 @@ import express from "express";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, formatExpandedPlan } from "../compiler.js";
-import { validate } from "../validator.js";
+import { compile, compileAgent, formatExpandedPlan, formatAgentPlan } from "../compiler.js";
+import { validate, validateAgent } from "../validator.js";
 import { loadSpecFile } from "../loader.js";
 import type {
+  AgentSpec,
   Spec,
   ExecutableStep,
   BrowserStep,
@@ -35,7 +36,9 @@ export type ServerSuite = {
   name: string;
   path: string;
   relativePath: string;
+  kind: "spec" | "agent" | null;
   spec: Spec | null;
+  agentSpec: AgentSpec | null;
   loadError: string | null;
 };
 
@@ -100,6 +103,10 @@ function countSteps(spec: Spec): number {
   return count;
 }
 
+function isAgentSuite(s: ServerSuite): s is ServerSuite & { kind: "agent"; agentSpec: AgentSpec } {
+  return s.kind === "agent" && s.agentSpec !== null;
+}
+
 // ---------------------------------------------------------------------------
 // Express app factory
 // ---------------------------------------------------------------------------
@@ -112,6 +119,7 @@ export function createApp(suites: ServerSuite[]): express.Application {
   for (const s of suites) suiteMap.set(s.id, s);
 
   // Build a cross-suite contract index: name → { contract, suites[] }
+  // Agent suites have no API contracts.
   type ContractEntry = {
     contract: ApiContract;
     suites: { id: string; name: string }[];
@@ -163,21 +171,35 @@ export function createApp(suites: ServerSuite[]): express.Application {
       if (nameFilter !== null && !s.name.toLowerCase().includes(nameFilter))
         return false;
       if (tagFilter !== null) {
+        // Agent specs have no tags
         const tags = s.spec?.tags ?? [];
         if (!tags.some((t) => t.toLowerCase() === tagFilter)) return false;
       }
       return true;
     });
 
-    const result = filtered.map((s) => ({
-      id: s.id,
-      name: s.name,
-      path: s.relativePath,
-      flowCount: s.spec !== null ? s.spec.flows.length : 0,
-      tags: s.spec !== null ? (s.spec.tags ?? []) : [],
-      hasError: s.loadError !== null,
-      expectedOutcome: s.spec?.expectedOutcome ?? "pass",
-    }));
+    const result = filtered.map((s) => {
+      if (isAgentSuite(s)) {
+        return {
+          id: s.id,
+          name: s.name,
+          path: s.relativePath,
+          type: "agent" as const,
+          toolCount: s.agentSpec.tools.length,
+          hasError: false,
+        };
+      }
+      return {
+        id: s.id,
+        name: s.name,
+        path: s.relativePath,
+        type: "spec" as const,
+        flowCount: s.spec !== null ? s.spec.flows.length : 0,
+        tags: s.spec !== null ? (s.spec.tags ?? []) : [],
+        hasError: s.loadError !== null,
+        expectedOutcome: s.spec?.expectedOutcome ?? "pass",
+      };
+    });
 
     res.json({ suites: result });
   });
@@ -192,15 +214,34 @@ export function createApp(suites: ServerSuite[]): express.Application {
       res.status(404).json({ error: "Suite not found" });
       return;
     }
-    if (suite.loadError !== null || suite.spec === null) {
+    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null)) {
       res.status(500).json({ error: suite.loadError ?? "Failed to load spec" });
       return;
     }
+
+    if (isAgentSuite(suite)) {
+      const { agentSpec } = suite;
+      res.json({
+        id: suite.id,
+        name: agentSpec.name,
+        path: suite.relativePath,
+        type: "agent",
+        toolNames: agentSpec.tools.map((t) => t.name),
+        toolCount: agentSpec.tools.length,
+      });
+      return;
+    }
+
     const { spec } = suite;
+    if (spec === null) {
+      res.status(500).json({ error: "Failed to load spec" });
+      return;
+    }
     res.json({
       id: suite.id,
       name: spec.name,
       path: suite.relativePath,
+      type: "spec",
       flowNames: spec.flows.map((f) => f.name),
       stepCount: countSteps(spec),
       apiNames: Object.keys(spec.apis ?? {}),
@@ -223,8 +264,36 @@ export function createApp(suites: ServerSuite[]): express.Application {
       res.status(404).json({ error: "Suite not found" });
       return;
     }
-    if (suite.loadError !== null || suite.spec === null) {
+    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null)) {
       res.status(500).json({ error: suite.loadError ?? "Failed to load spec" });
+      return;
+    }
+
+    // Agent spec browse plan
+    if (isAgentSuite(suite)) {
+      let agentPlan: ReturnType<typeof compileAgent>;
+      try {
+        agentPlan = compileAgent(suite.agentSpec);
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+        return;
+      }
+      const validation = validateAgent(suite.agentSpec);
+      res.json({
+        planType: "agent",
+        specName: agentPlan.specName,
+        tools: agentPlan.tools,
+        validation: {
+          errors: validation.errors.map((e) => e.message),
+          warnings: validation.warnings.map((w) => w.message),
+        },
+        renderedPlan: formatAgentPlan(agentPlan),
+      });
+      return;
+    }
+
+    if (suite.spec === null) {
+      res.status(500).json({ error: "Failed to load spec" });
       return;
     }
 
@@ -265,6 +334,7 @@ export function createApp(suites: ServerSuite[]): express.Application {
     }));
 
     res.json({
+      planType: "behavioral",
       specName: plan.specName,
       baseUrl: baseUrlStr,
       urls: urlsDisplay,
@@ -296,8 +366,35 @@ export function createApp(suites: ServerSuite[]): express.Application {
       res.status(404).json({ error: "Suite not found" });
       return;
     }
-    if (suite.loadError !== null || suite.spec === null) {
+    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null)) {
       res.status(500).json({ error: suite.loadError ?? "Failed to load spec" });
+      return;
+    }
+
+    // Agent spec execution plan
+    if (isAgentSuite(suite)) {
+      let agentPlan: ReturnType<typeof compileAgent>;
+      try {
+        agentPlan = compileAgent(suite.agentSpec);
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+        return;
+      }
+      const validation = validateAgent(suite.agentSpec);
+      res.json({
+        planType: "agent",
+        planVersion: 1,
+        plan: agentPlan,
+        validation: {
+          errors: validation.errors.map((e) => e.message),
+          warnings: validation.warnings.map((w) => w.message),
+        },
+      });
+      return;
+    }
+
+    if (suite.spec === null) {
+      res.status(500).json({ error: "Failed to load spec" });
       return;
     }
 
@@ -314,6 +411,7 @@ export function createApp(suites: ServerSuite[]): express.Application {
     const validation = validate(suite.spec, plan);
 
     res.json({
+      planType: "behavioral",
       planVersion: 1,
       plan,
       validation: {
@@ -391,14 +489,41 @@ export async function discoverSuites(
     const id = encodeSuiteId(rel);
 
     const loaded = await loadSpecFile(absPath);
-    suites.push({
-      id,
-      name: loaded.spec !== null ? loaded.spec.name : rel,
-      path: absPath,
-      relativePath: rel,
-      spec: loaded.spec,
-      loadError: loaded.error,
-    });
+
+    if (loaded.kind === "spec") {
+      suites.push({
+        id,
+        name: loaded.spec.name,
+        path: absPath,
+        relativePath: rel,
+        kind: "spec",
+        spec: loaded.spec,
+        agentSpec: null,
+        loadError: null,
+      });
+    } else if (loaded.kind === "agent") {
+      suites.push({
+        id,
+        name: loaded.spec.name,
+        path: absPath,
+        relativePath: rel,
+        kind: "agent",
+        spec: null,
+        agentSpec: loaded.spec,
+        loadError: null,
+      });
+    } else {
+      suites.push({
+        id,
+        name: rel,
+        path: absPath,
+        relativePath: rel,
+        kind: null,
+        spec: null,
+        agentSpec: null,
+        loadError: loaded.error,
+      });
+    }
   }
 
   return suites;

@@ -271,6 +271,79 @@ export type ValidationResult = {
 }
 
 // ---------------------------------------------------------------------------
+// Agent spec types
+// ---------------------------------------------------------------------------
+
+// RuntimeMessageSource: the source of a message at runtime (never 'any')
+export type RuntimeMessageSource = 'user' | 'llm' | 'tool'
+// MatchSource: the source field in a tool match rule ('any' is an authoring convenience)
+export type MatchSource = RuntimeMessageSource | 'any'
+
+export type ToolMatch = {
+  source: MatchSource
+  pattern: RegExp
+}
+
+export type ConversationTool = {
+  name: string
+  match: ToolMatch[]
+  description?: string
+  prompt?: string
+}
+
+export type AgentSpec = {
+  __type: 'agent'
+  name: string
+  // env() is allowed; secret() is structurally valid but triggers a validator warning
+  system: Resolvable<string>
+  tools: ConversationTool[]
+}
+
+// ---------------------------------------------------------------------------
+// Agent compiled plan types (JSON-serializable)
+// ---------------------------------------------------------------------------
+
+export type SerializedToolMatch = {
+  source: MatchSource
+  pattern: string  // RegExp.source
+  flags: string    // RegExp.flags
+}
+
+export type SerializedTool = {
+  name: string
+  match: SerializedToolMatch[]
+  description?: string
+  prompt?: string
+}
+
+export type AgentPlan = {
+  specName: string
+  // env() markers preserved unresolved; secret() triggers a validator warning
+  system: Resolvable<string>
+  tools: SerializedTool[]
+}
+
+// ---------------------------------------------------------------------------
+// Agent matcher I/O types
+// ---------------------------------------------------------------------------
+
+export type AgentMessage = {
+  text: string
+  source: RuntimeMessageSource
+}
+
+export type ToolCandidate = {
+  name: string
+  matchIndex: number  // which match rule fired (index into tool.match[])
+  captures: string[]  // regex capture groups from first match
+}
+
+export type AgentMatchResult = {
+  // Dispatch candidates, not execution directives. The caller decides what to execute.
+  candidates: ToolCandidate[]
+}
+
+// ---------------------------------------------------------------------------
 // Runtime result types
 // ---------------------------------------------------------------------------
 

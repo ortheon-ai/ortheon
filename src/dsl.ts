@@ -1,10 +1,12 @@
 import type {
+  AgentSpec,
   ApiContract,
   ApiOptions,
   ApiStep,
   BearerValue,
   BrowserOptions,
   BrowserStep,
+  ConversationTool,
   DynamicValue,
   EnvValue,
   ExistsCheck,
@@ -14,6 +16,7 @@ import type {
   FlowItem,
   GenerateKind,
   GenerateValue,
+  MatchSource,
   MatcherName,
   RefValue,
   Resolvable,
@@ -24,6 +27,7 @@ import type {
   SpecSafety,
   Step,
   StepAction,
+  ToolMatch,
   UseStep,
 } from './types.js'
 
@@ -189,7 +193,40 @@ export function spec(name: string, config: SpecConfig): Spec {
 }
 
 // ---------------------------------------------------------------------------
+// Agent spec builders
+// ---------------------------------------------------------------------------
+
+export type ConversationToolConfig = {
+  match: ToolMatch[]
+  description?: string
+  prompt?: string
+}
+
+export function tool(name: string, config: ConversationToolConfig): ConversationTool {
+  return {
+    name,
+    match: config.match,
+    ...(config.description !== undefined ? { description: config.description } : {}),
+    ...(config.prompt !== undefined ? { prompt: config.prompt } : {}),
+  }
+}
+
+export type AgentConfig = {
+  system: Resolvable<string>
+  tools: ConversationTool[]
+}
+
+export function agent(name: string, config: AgentConfig): AgentSpec {
+  return {
+    __type: 'agent',
+    name,
+    system: config.system,
+    tools: config.tools,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Re-export types for spec file convenience
 // ---------------------------------------------------------------------------
 
-export type { BearerValue, GenerateKind, GenerateValue, Flow, FlowItem, Spec, SpecExpectedOutcome, Step, Section, ApiContract } from './types.js'
+export type { AgentSpec, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, MatchSource, Spec, SpecExpectedOutcome, Step, Section, ApiContract, ToolMatch } from './types.js'

@@ -76,7 +76,9 @@ function makeSuite(id: string, s: Spec, overrides?: Partial<ServerSuite>): Serve
     name: s.name,
     path: `/test/${id}.ts`,
     relativePath: `test/${id}.ts`,
+    kind: 'spec',
     spec: s,
+    agentSpec: null,
     loadError: null,
     ...overrides,
   }
