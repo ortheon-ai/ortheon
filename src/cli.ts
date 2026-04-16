@@ -162,17 +162,17 @@ program
     const maxNameLen = Math.max(4, ...suites.map(s => s.name.length))
 
     console.log(`Suites at ${baseUrl}:\n`)
-    console.log(`${'ID'.padEnd(maxIdLen)}  ${'NAME'.padEnd(maxNameLen)}  TYPE    INFO`)
-    console.log(`${'-'.repeat(maxIdLen)}  ${'-'.repeat(maxNameLen)}  ------  ----`)
+    console.log(`${'ID'.padEnd(maxIdLen)}  ${'NAME'.padEnd(maxNameLen)}  ${'TYPE'.padEnd(7)}  INFO`)
+    console.log(`${'-'.repeat(maxIdLen)}  ${'-'.repeat(maxNameLen)}  ${'-------'}  ----`)
 
     for (const s of suites) {
       if (s.type === 'agent') {
-        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  [agent]  ${s.toolCount} tool(s)`)
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[agent]'.padEnd(7)}  ${s.toolCount} tool(s)`)
       } else if (s.type === 'unknown') {
-        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  [error]  (failed to load)`)
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[error]'.padEnd(7)}  (failed to load)`)
       } else {
         const tags = s.tags.length > 0 ? s.tags.join(', ') : ''
-        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  [spec]   ${tags}`)
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[spec]'.padEnd(7)}  ${tags}`)
       }
     }
 
