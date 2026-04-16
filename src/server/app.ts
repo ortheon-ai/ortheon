@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, compileAgent, formatExpandedPlan, formatAgentPlan } from "../compiler.js";
+import { compile, compileAgent, flattenTools, formatExpandedPlan, formatAgentPlan } from "../compiler.js";
 import { validate, validateAgent } from "../validator.js";
 import { loadSpecFile } from "../loader.js";
 import type {
@@ -194,7 +194,7 @@ export function createApp(suites: ServerSuite[]): express.Application {
           name: s.name,
           path: s.relativePath,
           type: "agent" as const,
-          toolCount: s.agentSpec.tools.length,
+          toolCount: flattenTools(s.agentSpec.tools).length,
           hasError: false,
         };
       }
@@ -235,8 +235,8 @@ export function createApp(suites: ServerSuite[]): express.Application {
         name: agentSpec.name,
         path: suite.relativePath,
         type: "agent",
-        toolNames: agentSpec.tools.map((t) => t.name),
-        toolCount: agentSpec.tools.length,
+        toolNames: flattenTools(agentSpec.tools).map((t) => t.name),
+        toolCount: flattenTools(agentSpec.tools).length,
       });
       return;
     }

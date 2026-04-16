@@ -370,7 +370,7 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
 //   - Passes aliases, args, prompt, and system through unchanged
 // ---------------------------------------------------------------------------
 
-function flattenTools(entries: AgentSpec['tools']): ConversationTool[] {
+export function flattenTools(entries: AgentSpec['tools']): ConversationTool[] {
   const result: ConversationTool[] = []
   for (const entry of entries) {
     if ('__type' in entry && entry.__type === 'toolset') {
