@@ -230,13 +230,14 @@ export function createApp(suites: ServerSuite[]): express.Application {
 
     if (isAgentSuite(suite)) {
       const { agentSpec } = suite;
+      const tools = flattenTools(agentSpec.tools);
       res.json({
         id: suite.id,
         name: agentSpec.name,
         path: suite.relativePath,
         type: "agent",
-        toolNames: flattenTools(agentSpec.tools).map((t) => t.name),
-        toolCount: flattenTools(agentSpec.tools).length,
+        toolNames: tools.map((t) => t.name),
+        toolCount: tools.length,
       });
       return;
     }
