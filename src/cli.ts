@@ -60,8 +60,8 @@ if (needsTsx) {
 
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
-import { compile, formatExpandedPlan } from './compiler.js'
-import { validate } from './validator.js'
+import { compile, formatExpandedPlan, formatAgentSpec } from './compiler.js'
+import { validate, validateAgent } from './validator.js'
 import { runSpec, runPlan } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
 import { resolveGlob, loadSpecFile } from './loader.js'
@@ -130,7 +130,13 @@ program
   .requiredOption('--from <url>', 'Base URL of the Ortheon server')
   .action(async (options: { from: string }) => {
     const baseUrl = options.from.replace(/\/$/, '')
-    let data: { suites: Array<{ id: string; name: string; path: string; tags: string[]; expectedOutcome: string }> }
+    let data: {
+      suites: Array<
+        | { id: string; name: string; path: string; type: 'spec'; tags: string[]; expectedOutcome: string }
+        | { id: string; name: string; path: string; type: 'agent'; toolCount: number }
+        | { id: string; name: string; path: string; type: 'unknown'; hasError: true }
+      >
+    }
 
     try {
       const res = await fetch(`${baseUrl}/api/suites`)
@@ -156,12 +162,18 @@ program
     const maxNameLen = Math.max(4, ...suites.map(s => s.name.length))
 
     console.log(`Suites at ${baseUrl}:\n`)
-    console.log(`${'ID'.padEnd(maxIdLen)}  ${'NAME'.padEnd(maxNameLen)}  TAGS`)
-    console.log(`${'-'.repeat(maxIdLen)}  ${'-'.repeat(maxNameLen)}  ----`)
+    console.log(`${'ID'.padEnd(maxIdLen)}  ${'NAME'.padEnd(maxNameLen)}  ${'TYPE'.padEnd(7)}  INFO`)
+    console.log(`${'-'.repeat(maxIdLen)}  ${'-'.repeat(maxNameLen)}  ${'-------'}  ----`)
 
     for (const s of suites) {
-      const tags = s.tags.length > 0 ? s.tags.join(', ') : ''
-      console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${tags}`)
+      if (s.type === 'agent') {
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[agent]'.padEnd(7)}  ${s.toolCount} tool(s)`)
+      } else if (s.type === 'unknown') {
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[error]'.padEnd(7)}  (failed to load)`)
+      } else {
+        const tags = s.tags.length > 0 ? s.tags.join(', ') : ''
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[spec]'.padEnd(7)}  ${tags}`)
+      }
     }
 
     console.log(`\n${suites.length} suite(s). Run with: ortheon run --from ${baseUrl} --suite <id>`)
@@ -173,14 +185,38 @@ program
 
 program
   .command('expand <file>')
-  .description('Print the fully expanded execution plan for a spec file')
+  .description('Print the fully expanded execution plan for a spec or agent file')
   .action(async (file: string) => {
-    const spec = await loadSpecForCli(file)
-    if (!spec) process.exit(1)
+    const loaded = await loadSpecFile(file)
 
-    const plan = compile(spec)
+    if (loaded.kind === null) {
+      console.error(`Failed to load spec file "${file}":`)
+      console.error(loaded.error)
+      process.exit(1)
+    }
 
-    const validation = validate(spec, plan)
+    if (loaded.kind === 'agent') {
+      const validation = validateAgent(loaded.spec)
+      if (!validation.valid) {
+        console.error('Validation errors:')
+        for (const err of validation.errors) {
+          console.error(`  error: ${err.message}`)
+        }
+        console.error('')
+      }
+      if (validation.warnings.length > 0) {
+        for (const warn of validation.warnings) {
+          console.warn(`  warning: ${warn.message}`)
+        }
+        console.warn('')
+      }
+      console.log(formatAgentSpec(loaded.spec))
+      process.exit(validation.valid ? 0 : 1)
+    }
+
+    const plan = compile(loaded.spec)
+
+    const validation = validate(loaded.spec, plan)
     if (!validation.valid) {
       console.error('Validation errors:')
       for (const err of validation.errors) {
@@ -330,12 +366,13 @@ async function runRemote(
   console.log(`Fetching plan from: ${artifactUrl}`)
 
   let artifact: {
+    planType: 'behavioral' | 'agent' | string
     planVersion: number
-    plan: ExecutionPlan
+    plan: ExecutionPlan | Record<string, unknown>
     validation: { errors: string[]; warnings: string[] }
-    expectedOutcome: string
-    tags: string[]
-    safety: string | null
+    expectedOutcome?: string
+    tags?: string[]
+    safety?: string | null
   }
 
   try {
@@ -372,9 +409,14 @@ async function runRemote(
     }
   }
 
+  if (artifact.planType === 'agent') {
+    console.error(`Suite "${suiteId}" is an agent spec. Agent specs cannot be run with "ortheon run" -- use an agent runtime to consume this plan.`)
+    process.exit(1)
+  }
+
   let result: SpecResult
   try {
-    result = await runPlan(artifact.plan, {
+    result = await runPlan(artifact.plan as ExecutionPlan, {
       ...(options.headed !== undefined ? { headed: options.headed } : {}),
       timeoutMs: parseInt(options.timeout, 10),
     })
@@ -395,9 +437,13 @@ async function runRemote(
 
 async function loadSpecForCli(file: string): Promise<Spec | null> {
   const result = await loadSpecFile(file)
-  if (result.error !== null) {
+  if (result.kind === null) {
     console.error(`Failed to load spec file "${file}":`)
     console.error(result.error)
+    return null
+  }
+  if (result.kind === 'agent') {
+    console.error(`"${file}" is an agent spec. Agent specs cannot be run directly -- use an agent runtime to consume this spec.`)
     return null
   }
   return result.spec

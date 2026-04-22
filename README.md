@@ -121,6 +121,55 @@ Typical loop:
 
 This makes specs suitable as **behavioral contracts** when modifying or rewriting systems.
 
+## Agent specs
+
+In addition to behavioral specs, Ortheon supports **agent specs** — declarative command contracts for LLM-driven agents.
+
+Where a behavioral spec describes what must be true about a running system, an agent spec describes what commands an LLM agent may emit and how those commands should be parsed. The primary artifact is a command table that an agent runtime uses to deterministically dispatch tool calls.
+
+```ts
+import { agent, tool, env } from "ortheon";
+
+export default agent("bug-reports", {
+  system: "You are a triage bot. Analyze incoming reports and take action.",
+
+  tools: [
+    tool("create-issue", {
+      source: "llm",
+      args: {
+        title: { type: "string", required: true },
+        priority: { type: "string" },
+      },
+      prompt: "Create a GitHub issue with the title and priority provided.",
+    }),
+    tool("lookup-docs", {
+      aliases: ["docs"],
+      source: "any",
+      args: { query: { type: "string", required: true } },
+    }),
+  ],
+});
+```
+
+The system prompt describes the role. The command table is auto-generated as `plan.commandReference` during compilation — no need to duplicate tool definitions in the prompt:
+
+```ts
+import { compileAgent, runAgentStep } from "ortheon";
+
+const plan = compileAgent(spec);
+const systemPrompt = plan.system + "\n\n" + plan.commandReference;
+// pass systemPrompt to your LLM client
+
+const result = runAgentStep(plan, { text: llmReply, source: "llm" });
+// result.candidates[0].name  → "create-issue"
+// result.candidates[0].args  → { title: "...", priority: "high" }
+// result.candidates[0].prompt → "Create a GitHub issue..."
+```
+
+`runAgentStep()` handles one message at a time. The caller owns the LLM client, conversation history, tool execution, and loop control. `ortheon expand` prints the command table for an agent file.
+
+See [docs/agents.md](docs/agents.md) for the full reference.
+
 ## Installation
 
 ```bash
@@ -493,6 +542,31 @@ Five only. No matcher jungle.
 | `exists`    | Not null/undefined                          | No                 |
 | `notExists` | Is null/undefined                           | No                 |
 
+### Agent spec primitives
+
+| Function | Purpose |
+| -------- | ------- |
+| `agent(name, config)` | Top-level agent spec |
+| `tool(name, config)` | Command declaration |
+
+**`agent()` config:**
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `system` | `string \| EnvValue` | LLM system prompt. Use `env()` for externalized prompts; avoid `secret()`. |
+| `tools` | `ConversationTool[]` | Declared commands. |
+
+**`tool()` config** (all fields optional):
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `source` | `'llm' \| 'user' \| 'tool' \| 'any'` | `'llm'` | Which message source may emit this command. `'llm'` prevents accidental user `/command` triggers. |
+| `aliases` | `string[]` | — | Alternate command names. All names and aliases must be globally unique and kebab-case. |
+| `args` | `ArgSpec` | — | Argument schema: `Record<string, { type: 'string' \| 'number' \| 'boolean'; required?: boolean }>`. |
+| `prompt` | `Resolvable<string>` | — | Returned in `ToolCallResult.prompt` when the command is dispatched. The caller injects it into the conversation. |
+
+**`runAgentStep(plan, message)`** parses `/command key="value"` lines, resolves aliases, validates args, and returns ordered candidates. Commands inside code fences and blockquotes are ignored. Lines with malformed args (unquoted values, mid-sentence placement) are silently dropped. Schema violations (missing required arg, wrong type) produce a candidate with `validation.valid = false`.
+
 ### API step options
 
 ```ts
@@ -709,9 +783,12 @@ ortheon/
   flows/            # Reusable flows by domain
     auth/login.ts
     cart/add-item.ts
-  specs/            # Scenario specs
+  specs/            # Behavioral scenario specs
     smoke/health.ortheon.ts
     checkout/authenticated-checkout.ortheon.ts
+  agents/           # Agent specs
+    bug-reports.ortheon.ts
+    support-triage.ortheon.ts
   environments/     # Environment configs (optional)
     staging.ts
 ```

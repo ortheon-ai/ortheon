@@ -76,7 +76,9 @@ function makeSuite(id: string, s: Spec, overrides?: Partial<ServerSuite>): Serve
     name: s.name,
     path: `/test/${id}.ts`,
     relativePath: `test/${id}.ts`,
+    kind: 'spec',
     spec: s,
+    agentSpec: null,
     loadError: null,
     ...overrides,
   }
@@ -193,6 +195,48 @@ describe('GET /api/suites', () => {
       expect(s).toHaveProperty('expectedOutcome')
       expect(s.expectedOutcome).toBe('pass')
     }
+  })
+})
+
+describe('GET /api/suites with a failed-to-load suite', () => {
+  let srv: TestServer
+  let brokenId: string
+
+  beforeAll(async () => {
+    brokenId = encodeSuiteId('test/broken.ts')
+    const suites: ServerSuite[] = [
+      makeSuite('s1', healthSpec),
+      {
+        id: brokenId,
+        name: 'broken',
+        path: '/test/broken.ts',
+        relativePath: 'test/broken.ts',
+        kind: null,
+        spec: null,
+        agentSpec: null,
+        loadError: 'SyntaxError: Unexpected token',
+      },
+    ]
+    srv = await startTestServer(suites)
+  })
+
+  afterAll(() => srv.close())
+
+  it('returns type="unknown" and hasError=true for a suite that failed to load', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites')
+    const suites = (body as { suites: Record<string, unknown>[] }).suites
+    const broken = suites.find(s => s['name'] === 'broken')
+    expect(broken).toBeDefined()
+    expect(broken!['type']).toBe('unknown')
+    expect(broken!['hasError']).toBe(true)
+  })
+
+  it('does not return type="spec" for a suite that failed to load', async () => {
+    const { body } = await get(srv.baseUrl, '/api/suites')
+    const suites = (body as { suites: Record<string, unknown>[] }).suites
+    const broken = suites.find(s => s['name'] === 'broken')
+    expect(broken!['type']).not.toBe('spec')
+    expect(broken!['type']).not.toBe('agent')
   })
 })
 

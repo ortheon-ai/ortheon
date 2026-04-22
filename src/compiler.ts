@@ -1,7 +1,10 @@
 import type {
+  AgentPlan,
+  AgentSpec,
   ApiContract,
   ApiStep,
   BrowserStep,
+  ConversationTool,
   ExecutableStep,
   ExecutionPlan,
   ExpectStep,
@@ -11,8 +14,10 @@ import type {
   InlineExpect,
   Resolvable,
   Section,
+  SerializedTool,
   Spec,
   Step,
+  Toolset,
   UseStep,
 } from './types.js'
 
@@ -355,6 +360,182 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
   }
 
   return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Agent compiler
+//
+// Transforms an AgentSpec into an AgentPlan:
+//   - Defaults source to 'llm' when not specified
+//   - Passes aliases, args, prompt, and system through unchanged
+// ---------------------------------------------------------------------------
+
+export function flattenTools(entries: AgentSpec['tools']): ConversationTool[] {
+  const result: ConversationTool[] = []
+  for (const entry of entries) {
+    if ('__type' in entry && entry.__type === 'toolset') {
+      result.push(...entry.tools)
+    } else {
+      result.push(entry as ConversationTool)
+    }
+  }
+  return result
+}
+
+export function compileAgent(spec: AgentSpec): AgentPlan {
+  const tools: SerializedTool[] = flattenTools(spec.tools).map(t => ({
+    name: t.name,
+    ...(t.aliases !== undefined ? { aliases: t.aliases } : {}),
+    source: t.source ?? 'llm',
+    ...(t.args !== undefined ? { args: t.args } : {}),
+    ...(t.prompt !== undefined ? { prompt: t.prompt } : {}),
+  }))
+
+  return {
+    specName: spec.name,
+    system: spec.system,
+    tools,
+    commandReference: formatCommandReference(tools),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command reference formatter
+//
+// Generates an LLM-ready block describing available commands. Intended to be
+// appended to the system prompt so the LLM does not need to duplicate the
+// command table in the spec's `system` field.
+// ---------------------------------------------------------------------------
+
+export function formatCommandReference(tools: SerializedTool[]): string {
+  if (tools.length === 0) return ''
+
+  const lines: string[] = [
+    'Commands are available by writing /command key="value" on its own line.',
+    '',
+    'Available commands:',
+  ]
+
+  for (const t of tools) {
+    let cmdLine = `  /${t.name}`
+    if (t.args && Object.keys(t.args).length > 0) {
+      const argParts = Object.entries(t.args).map(([k, f]) => {
+        const req = f.required ? ', required' : ''
+        return `${k}="<${f.type}${req}>"`
+      })
+      cmdLine += ' ' + argParts.join(' ')
+    }
+    if (t.aliases && t.aliases.length > 0) {
+      cmdLine += `  (aliases: ${t.aliases.join(', ')})`
+    }
+    lines.push(cmdLine)
+  }
+
+  lines.push('')
+  lines.push('Rules:')
+  lines.push('- One command per line, at the start of the line')
+  lines.push('- Always quote argument values: key="value"')
+  lines.push('- Do not place commands inside code blocks or block quotes')
+
+  return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Agent plan formatter
+// ---------------------------------------------------------------------------
+
+function formatResolvable(value: Resolvable<string>): string {
+  if (typeof value === 'string') return value
+  const v = value as { __type: string; path?: string; name?: string; kind?: string; value?: unknown }
+  switch (v.__type) {
+    case 'ref':      return `ref("${v.path ?? ''}")`
+    case 'env':      return `env("${v.name ?? ''}")`
+    case 'secret':   return `secret("${v.name ?? ''}")`
+    case 'generate': return `generate("${v.kind ?? ''}")`
+    case 'bearer':   return `bearer(...)`
+    default:         return `${v.__type}(...)`
+  }
+}
+
+export function formatAgentPlan(plan: AgentPlan): string {
+  const lines: string[] = []
+
+  lines.push(`Agent: ${plan.specName}`)
+  lines.push(`System prompt: ${formatResolvable(plan.system)}`)
+  lines.push('')
+
+  if (plan.tools.length === 0) {
+    lines.push('  (no commands defined)')
+    return lines.join('\n')
+  }
+
+  lines.push('  Arg syntax: /command key="value" ...')
+  lines.push('')
+
+  for (const t of plan.tools) {
+    formatSerializedTool(t, lines)
+  }
+
+  return lines.join('\n').trimEnd()
+}
+
+function formatSerializedTool(t: SerializedTool, lines: string[]): void {
+  const aliasesSuffix = t.aliases && t.aliases.length > 0 ? `   aliases: ${t.aliases.join(', ')}` : ''
+  lines.push(`  command: ${t.name}   source: ${t.source}${aliasesSuffix}`)
+
+  if (t.args && Object.keys(t.args).length > 0) {
+    const argParts = Object.entries(t.args).map(([k, f]) => {
+      const req = f.required ? ', required' : ''
+      return `${k} (${f.type}${req})`
+    })
+    lines.push(`    args: ${argParts.join(', ')}`)
+  }
+
+  if (t.prompt !== undefined) {
+    const promptStr = typeof t.prompt === 'string'
+      ? t.prompt.trim()
+      : formatResolvable(t.prompt)
+    lines.push(`    prompt: ${promptStr}`)
+  }
+
+  lines.push('')
+}
+
+function formatToolEntry(t: ConversationTool, lines: string[]): void {
+  formatSerializedTool({ ...t, source: t.source ?? 'llm' }, lines)
+}
+
+// Renders an AgentSpec with toolset groupings visible. Used by ortheon expand
+// so provenance is shown even though the compiled AgentPlan is flat.
+export function formatAgentSpec(spec: AgentSpec): string {
+  const lines: string[] = []
+
+  lines.push(`Agent: ${spec.name}`)
+  lines.push(`System prompt: ${formatResolvable(spec.system)}`)
+  lines.push('')
+
+  const allEntries = spec.tools
+  if (allEntries.length === 0) {
+    lines.push('  (no commands defined)')
+    return lines.join('\n')
+  }
+
+  lines.push('  Arg syntax: /command key="value" ...')
+  lines.push('')
+
+  for (const entry of allEntries) {
+    if ('__type' in entry && (entry as Toolset).__type === 'toolset') {
+      const ts = entry as Toolset
+      lines.push(`  [toolset: ${ts.name}]`)
+      for (const t of ts.tools) {
+        formatToolEntry(t, lines)
+      }
+    } else {
+      formatToolEntry(entry as ConversationTool, lines)
+    }
+  }
+
+  return lines.join('\n').trimEnd()
 }
 
 function formatAction(action: ExecutableStep['action']): string {

@@ -271,6 +271,95 @@ export type ValidationResult = {
 }
 
 // ---------------------------------------------------------------------------
+// Agent spec types
+// ---------------------------------------------------------------------------
+
+// RuntimeMessageSource: the source of a message at runtime (never 'any')
+export type RuntimeMessageSource = 'user' | 'llm' | 'tool'
+// MatchSource: the source field in a tool command source ('any' is an authoring convenience)
+export type MatchSource = RuntimeMessageSource | 'any'
+
+// Arg schema for declarative command argument validation
+export type ArgType = 'string' | 'number' | 'boolean'
+export type ArgField = {
+  type: ArgType
+  required?: boolean
+}
+export type ArgSpec = Record<string, ArgField>
+
+export type ConversationTool = {
+  name: string            // kebab-case command name
+  aliases?: string[]      // optional alternate command names (kebab-case)
+  source?: MatchSource    // which message source may emit this command; defaults to 'llm'
+  args?: ArgSpec
+  prompt?: Resolvable<string>  // injected instruction returned to the caller on dispatch
+}
+
+// Named group of tools for sharing across agents.
+// The compiler flattens toolsets into the flat SerializedTool[] in AgentPlan.
+// The name is kebab-case and appears in ortheon expand output only (not in the plan).
+export type Toolset = {
+  __type: 'toolset'
+  name: string
+  tools: ConversationTool[]
+}
+
+export type AgentSpec = {
+  __type: 'agent'
+  name: string
+  // env() is allowed; secret() is structurally valid but triggers a validator warning
+  system: Resolvable<string>
+  tools: Array<ConversationTool | Toolset>
+}
+
+// ---------------------------------------------------------------------------
+// Agent compiled plan types (JSON-serializable)
+// ---------------------------------------------------------------------------
+
+export type SerializedTool = {
+  name: string
+  aliases?: string[]
+  source: MatchSource     // always explicit in plan (defaulted from 'llm' during compile)
+  args?: ArgSpec
+  prompt?: Resolvable<string>
+}
+
+export type AgentPlan = {
+  specName: string
+  // env() markers preserved unresolved; secret() triggers a validator warning
+  system: Resolvable<string>
+  tools: SerializedTool[]
+  // LLM-ready command reference generated from the tools array.
+  // Append to the system prompt so the LLM knows the available commands.
+  commandReference: string
+}
+
+// ---------------------------------------------------------------------------
+// Agent step I/O types
+// ---------------------------------------------------------------------------
+
+export type AgentMessage = {
+  text: string
+  source: RuntimeMessageSource
+}
+
+export type ToolCallResult = {
+  name: string                    // canonical tool name
+  args: Record<string, unknown>   // parsed and coerced arg values
+  raw: string                     // the original command line as it appeared in the message
+  prompt?: Resolvable<string>     // from the tool definition, for the caller to inject
+  validation?: {
+    valid: boolean
+    errors?: string[]
+  }
+}
+
+export type AgentStepResult = {
+  // Dispatch candidates ordered by appearance in the message. Caller decides what to execute.
+  candidates: ToolCallResult[]
+}
+
+// ---------------------------------------------------------------------------
 // Runtime result types
 // ---------------------------------------------------------------------------
 
