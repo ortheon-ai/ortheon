@@ -526,7 +526,7 @@ function validateArgs(
 
   // Pass unknown args through as raw strings (no strict mode in v1)
   for (const [k, v] of Object.entries(rawArgs)) {
-    if (!(k in coerced)) {
+    if (!Object.hasOwn(coerced, k)) {
       coerced[k] = v
     }
   }
