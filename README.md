@@ -548,6 +548,7 @@ Five only. No matcher jungle.
 | -------- | ------- |
 | `agent(name, config)` | Top-level agent spec |
 | `tool(name, config)` | Command declaration |
+| `toolset(name, tools)` | Named, shareable group of tools that can be composed into one or more agent specs |
 
 **`agent()` config:**
 
@@ -566,6 +567,8 @@ Five only. No matcher jungle.
 | `prompt` | `Resolvable<string>` | — | Returned in `ToolCallResult.prompt` when the command is dispatched. The caller injects it into the conversation. |
 
 **`runAgentStep(plan, message)`** parses `/command key="value"` lines, resolves aliases, validates args, and returns ordered candidates. Commands inside code fences and blockquotes are ignored. Lines with malformed args (unquoted values, mid-sentence placement) are silently dropped. Schema violations (missing required arg, wrong type) produce a candidate with `validation.valid = false`.
+
+To share tools across multiple agent specs, group them with `toolset(name, tools)` and drop the toolset into each agent's `tools` array — the compiler flattens toolsets and the validator catches name conflicts globally. See [docs/agents.md](docs/agents.md) for details.
 
 ### API step options
 
