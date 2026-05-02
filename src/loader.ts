@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { AgentSpec, Spec } from './types.js'
+import type { AgentSpec, Spec, WorkflowSpec } from './types.js'
 
 // ---------------------------------------------------------------------------
 // Spec loader -- resolves, imports, and validates a spec file.
@@ -8,12 +8,14 @@ import type { AgentSpec, Spec } from './types.js'
 // Returns a discriminated union:
 //   { kind: 'spec', spec, error: null }
 //   { kind: 'agent', spec, error: null }
+//   { kind: 'workflow', spec, error: null }
 //   { kind: null, spec: null, error: string }
 // ---------------------------------------------------------------------------
 
 export type LoadedSpec =
   | { kind: 'spec'; spec: Spec; error: null }
   | { kind: 'agent'; spec: AgentSpec; error: null }
+  | { kind: 'workflow'; spec: WorkflowSpec; error: null }
   | { kind: null; spec: null; error: string }
 
 export async function loadSpecFile(file: string): Promise<LoadedSpec> {
@@ -29,6 +31,11 @@ export async function loadSpecFile(file: string): Promise<LoadedSpec> {
         spec: null,
         error: `File does not export a valid Ortheon spec or agent spec (expected a default export from spec(...) or agent(...))`,
       }
+    }
+
+    // WorkflowSpec is identified by __type: 'workflow' (check before agent)
+    if ('__type' in (s as object) && (s as { __type: string }).__type === 'workflow') {
+      return { kind: 'workflow', spec: s as WorkflowSpec, error: null }
     }
 
     // AgentSpec is identified by __type: 'agent'

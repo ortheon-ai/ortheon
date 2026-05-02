@@ -11,6 +11,7 @@ import type {
   Flow,
   FlowItem,
   FlowRange,
+  GateDescriptor,
   InlineExpect,
   Resolvable,
   Section,
@@ -19,6 +20,9 @@ import type {
   Step,
   Toolset,
   UseStep,
+  WorkflowPlan,
+  WorkflowSpec,
+  WorkflowStep,
 } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -389,6 +393,7 @@ export function compileAgent(spec: AgentSpec): AgentPlan {
     source: t.source ?? 'llm',
     ...(t.args !== undefined ? { args: t.args } : {}),
     ...(t.prompt !== undefined ? { prompt: t.prompt } : {}),
+    ...(t.requires_approval === true ? { requires_approval: true } : {}),
   }))
 
   return {
@@ -481,7 +486,8 @@ export function formatAgentPlan(plan: AgentPlan): string {
 
 function formatSerializedTool(t: SerializedTool, lines: string[]): void {
   const aliasesSuffix = t.aliases && t.aliases.length > 0 ? `   aliases: ${t.aliases.join(', ')}` : ''
-  lines.push(`  command: ${t.name}   source: ${t.source}${aliasesSuffix}`)
+  const approvalSuffix = t.requires_approval ? '   requires_approval: true' : ''
+  lines.push(`  command: ${t.name}   source: ${t.source}${aliasesSuffix}${approvalSuffix}`)
 
   if (t.args && Object.keys(t.args).length > 0) {
     const argParts = Object.entries(t.args).map(([k, f]) => {
@@ -553,4 +559,97 @@ function formatAction(action: ExecutableStep['action']): string {
     return `expect(...)`
   }
   return 'unknown'
+}
+
+// ---------------------------------------------------------------------------
+// Workflow compiler
+// ---------------------------------------------------------------------------
+
+export function compileWorkflow(spec: WorkflowSpec): WorkflowPlan {
+  const gates: GateDescriptor[] = []
+
+  for (let i = 0; i < spec.steps.length; i++) {
+    const s = spec.steps[i]!
+    if (s.approveBefore) gates.push({ stepIndex: i, position: 'before' })
+    if (s.approveAfter) gates.push({ stepIndex: i, position: 'after' })
+  }
+
+  return {
+    specName: spec.name,
+    trigger: spec.trigger,
+    steps: spec.steps,
+    gates,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Workflow formatters
+// ---------------------------------------------------------------------------
+
+function formatTrigger(trigger: WorkflowSpec['trigger']): string {
+  switch (trigger.kind) {
+    case 'discussion': {
+      const cmd = trigger.command ? `, command: "${trigger.command}"` : ''
+      return `discussion(category: "${trigger.category}"${cmd})`
+    }
+    case 'cron':
+      return `cron("${trigger.expr}")`
+    case 'manual':
+      return `manual()`
+    case 'spawn':
+      return `spawn(maxDepth: ${trigger.maxDepth})`
+  }
+}
+
+function formatWorkflowStepLine(s: WorkflowStep, index: number, lines: string[]): void {
+  const gates: string[] = []
+  if (s.approveBefore) gates.push('approveBefore')
+  if (s.approveAfter) gates.push('approveAfter')
+  const gateSuffix = gates.length > 0 ? `   [${gates.join(', ')}]` : ''
+  lines.push(`  ${String(index + 1).padStart(3, ' ')}. agent: ${s.specName}${gateSuffix}`)
+}
+
+export function formatWorkflowSpec(spec: WorkflowSpec): string {
+  const lines: string[] = []
+  lines.push(`Workflow: ${spec.name}`)
+  lines.push(`Trigger:  ${formatTrigger(spec.trigger)}`)
+  lines.push('')
+
+  if (spec.steps.length === 0) {
+    lines.push('  (no steps defined)')
+    return lines.join('\n')
+  }
+
+  lines.push(`Steps (${spec.steps.length}):`)
+  for (let i = 0; i < spec.steps.length; i++) {
+    formatWorkflowStepLine(spec.steps[i]!, i, lines)
+  }
+
+  return lines.join('\n')
+}
+
+export function formatWorkflowPlan(plan: WorkflowPlan): string {
+  const lines: string[] = []
+  lines.push(`Workflow: ${plan.specName}`)
+  lines.push(`Trigger:  ${formatTrigger(plan.trigger)}`)
+  lines.push('')
+
+  if (plan.steps.length === 0) {
+    lines.push('  (no steps defined)')
+  } else {
+    lines.push(`Steps (${plan.steps.length}):`)
+    for (let i = 0; i < plan.steps.length; i++) {
+      formatWorkflowStepLine(plan.steps[i]!, i, lines)
+    }
+  }
+
+  if (plan.gates.length > 0) {
+    lines.push('')
+    lines.push(`Gates (${plan.gates.length}):`)
+    for (const g of plan.gates) {
+      lines.push(`    step ${g.stepIndex + 1} ${g.position}`)
+    }
+  }
+
+  return lines.join('\n')
 }

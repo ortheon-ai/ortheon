@@ -157,6 +157,7 @@ tool("create-issue", {
 | `aliases` | `string[]` | — | Alternate command names. All identifiers must be unique across all tools and aliases. |
 | `args` | `ArgSpec` | — | Argument schema for validation and coercion. |
 | `prompt` | `Resolvable<string>` | — | Content returned to the caller in `ToolCallResult.prompt` when this command is dispatched. |
+| `requires_approval` | `boolean` | `false` | If `true`, the agent runtime must pause and wait for an external approval before executing this tool. |
 
 **Source values:**
 

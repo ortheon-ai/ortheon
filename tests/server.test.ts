@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { spec, flow, step, api, expect as orthExpect, ref } from '../src/dsl.js'
+import { spec, flow, step, api, expect as orthExpect, ref, workflow, trigger, workflowStep } from '../src/dsl.js'
 import { createApp, encodeSuiteId, decodeSuiteId, type ServerSuite } from '../src/server/app.js'
-import type { Spec } from '../src/types.js'
+import type { Spec, WorkflowSpec } from '../src/types.js'
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -70,6 +70,15 @@ const multiFlowSpec: Spec = spec('multi flow spec', {
   ],
 })
 
+const sampleWorkflowSpec: WorkflowSpec = workflow('sample-release-pipeline', {
+  trigger: trigger.discussion({ category: 'releases', command: '/ship' }),
+  steps: [
+    workflowStep.agent('plan-agent'),
+    workflowStep.agent('review-agent', { approveBefore: true }),
+    workflowStep.agent('deploy-agent', { approveBefore: true, approveAfter: true }),
+  ],
+})
+
 function makeSuite(id: string, s: Spec, overrides?: Partial<ServerSuite>): ServerSuite {
   return {
     id,
@@ -79,6 +88,22 @@ function makeSuite(id: string, s: Spec, overrides?: Partial<ServerSuite>): Serve
     kind: 'spec',
     spec: s,
     agentSpec: null,
+    workflowSpec: null,
+    loadError: null,
+    ...overrides,
+  }
+}
+
+function makeWorkflowSuite(id: string, w: WorkflowSpec, overrides?: Partial<ServerSuite>): ServerSuite {
+  return {
+    id,
+    name: w.name,
+    path: `/test/${id}.ts`,
+    relativePath: `test/${id}.ts`,
+    kind: 'workflow',
+    spec: null,
+    agentSpec: null,
+    workflowSpec: w,
     loadError: null,
     ...overrides,
   }
@@ -214,6 +239,7 @@ describe('GET /api/suites with a failed-to-load suite', () => {
         kind: null,
         spec: null,
         agentSpec: null,
+        workflowSpec: null,
         loadError: 'SyntaxError: Unexpected token',
       },
     ]
@@ -346,7 +372,7 @@ describe('GET /api/suites/:id', () => {
   it('returns 500 with error message for a suite that failed to load', async () => {
     const brokenId = encodeSuiteId('test/broken.ts')
     const brokenSuites = [
-      { id: brokenId, name: 'broken', path: '/test/broken.ts', relativePath: 'test/broken.ts', spec: null, loadError: 'SyntaxError: Unexpected token' },
+      { id: brokenId, name: 'broken', path: '/test/broken.ts', relativePath: 'test/broken.ts', kind: null, spec: null, agentSpec: null, workflowSpec: null, loadError: 'SyntaxError: Unexpected token' },
     ]
     const srv2 = await startTestServer(brokenSuites)
     try {
@@ -567,6 +593,141 @@ describe('GET /api/suites/:id/execution-plan', () => {
 // - RunManager unit tests
 //
 // Execution now happens via the CLI using plans fetched from GET /api/suites/:id/execution-plan.
+
+// ---------------------------------------------------------------------------
+// Workflow suite — GET /api/suites (list)
+// ---------------------------------------------------------------------------
+
+describe('GET /api/suites with a workflow suite', () => {
+  let srv: TestServer
+  const wid = encodeSuiteId('test/sample-workflow.ts')
+
+  beforeAll(async () => {
+    srv = await startTestServer([makeWorkflowSuite(wid, sampleWorkflowSpec)])
+  })
+
+  afterAll(() => srv.close())
+
+  it('returns type="workflow" with stepCount and triggerKind', async () => {
+    const { status, body } = await get(srv.baseUrl, '/api/suites')
+    expect(status).toBe(200)
+    const suites = (body as { suites: Record<string, unknown>[] }).suites
+    expect(suites).toHaveLength(1)
+    const s = suites[0]!
+    expect(s['type']).toBe('workflow')
+    expect(s['stepCount']).toBe(3)
+    expect(s['triggerKind']).toBe('discussion')
+    expect(s['hasError']).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Workflow suite — GET /api/suites/:id
+// ---------------------------------------------------------------------------
+
+describe('GET /api/suites/:id for a workflow suite', () => {
+  let srv: TestServer
+  const wid = encodeSuiteId('test/sample-workflow.ts')
+
+  beforeAll(async () => {
+    srv = await startTestServer([makeWorkflowSuite(wid, sampleWorkflowSpec)])
+  })
+
+  afterAll(() => srv.close())
+
+  it('returns workflow metadata', async () => {
+    const { status, body } = await get(srv.baseUrl, `/api/suites/${wid}`)
+    expect(status).toBe(200)
+    const b = body as Record<string, unknown>
+    expect(b['type']).toBe('workflow')
+    expect(b['name']).toBe('sample-release-pipeline')
+    expect(Array.isArray(b['stepNames'])).toBe(true)
+    expect(b['stepNames']).toEqual(['plan-agent', 'review-agent', 'deploy-agent'])
+    expect(b['stepCount']).toBe(3)
+    expect(b['gateCount']).toBe(3)
+    expect(b).toHaveProperty('trigger')
+    const trigger = b['trigger'] as Record<string, unknown>
+    expect(trigger['kind']).toBe('discussion')
+    expect(trigger['category']).toBe('releases')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Workflow suite — GET /api/suites/:id/plan
+// ---------------------------------------------------------------------------
+
+describe('GET /api/suites/:id/plan for a workflow suite', () => {
+  let srv: TestServer
+  const wid = encodeSuiteId('test/sample-workflow.ts')
+
+  beforeAll(async () => {
+    srv = await startTestServer([makeWorkflowSuite(wid, sampleWorkflowSpec)])
+  })
+
+  afterAll(() => srv.close())
+
+  it('returns planType="workflow" with trigger, steps, gates, validation, renderedPlan', async () => {
+    const { status, body } = await get(srv.baseUrl, `/api/suites/${wid}/plan`)
+    expect(status).toBe(200)
+    const b = body as Record<string, unknown>
+    expect(b['planType']).toBe('workflow')
+    expect(b['specName']).toBe('sample-release-pipeline')
+    expect(b).toHaveProperty('trigger')
+    expect(Array.isArray(b['steps'])).toBe(true)
+    expect((b['steps'] as unknown[]).length).toBe(3)
+    expect(Array.isArray(b['gates'])).toBe(true)
+    expect((b['gates'] as unknown[]).length).toBe(3)
+    expect(b).toHaveProperty('validation')
+    const validation = b['validation'] as Record<string, unknown>
+    expect(Array.isArray(validation['errors'])).toBe(true)
+    expect(Array.isArray(validation['warnings'])).toBe(true)
+    expect(validation['errors']).toHaveLength(0)
+    expect(typeof b['renderedPlan']).toBe('string')
+    expect((b['renderedPlan'] as string).length).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Workflow suite — GET /api/suites/:id/execution-plan
+// ---------------------------------------------------------------------------
+
+describe('GET /api/suites/:id/execution-plan for a workflow suite', () => {
+  let srv: TestServer
+  const wid = encodeSuiteId('test/sample-workflow.ts')
+
+  beforeAll(async () => {
+    srv = await startTestServer([makeWorkflowSuite(wid, sampleWorkflowSpec)])
+  })
+
+  afterAll(() => srv.close())
+
+  it('returns planType="workflow", planVersion=1, plan, validation', async () => {
+    const { status, body } = await get(srv.baseUrl, `/api/suites/${wid}/execution-plan`)
+    expect(status).toBe(200)
+    const b = body as Record<string, unknown>
+    expect(b['planType']).toBe('workflow')
+    expect(b['planVersion']).toBe(1)
+    expect(b).toHaveProperty('plan')
+    expect(b).toHaveProperty('validation')
+  })
+
+  it('plan contains specName, trigger, steps, gates', async () => {
+    const { body } = await get(srv.baseUrl, `/api/suites/${wid}/execution-plan`)
+    const plan = (body as { plan: Record<string, unknown> }).plan
+    expect(plan['specName']).toBe('sample-release-pipeline')
+    expect(plan).toHaveProperty('trigger')
+    expect(Array.isArray(plan['steps'])).toBe(true)
+    expect((plan['steps'] as unknown[]).length).toBe(3)
+    expect(Array.isArray(plan['gates'])).toBe(true)
+    expect((plan['gates'] as unknown[]).length).toBe(3)
+  })
+
+  it('validation has empty errors for a valid workflow', async () => {
+    const { body } = await get(srv.baseUrl, `/api/suites/${wid}/execution-plan`)
+    const validation = (body as { validation: { errors: string[]; warnings: string[] } }).validation
+    expect(validation.errors).toHaveLength(0)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // SPA fallback

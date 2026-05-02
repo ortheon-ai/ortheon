@@ -60,8 +60,8 @@ if (needsTsx) {
 
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
-import { compile, formatExpandedPlan, formatAgentSpec } from './compiler.js'
-import { validate, validateAgent } from './validator.js'
+import { compile, formatExpandedPlan, formatAgentSpec, formatWorkflowSpec } from './compiler.js'
+import { validate, validateAgent, validateWorkflow } from './validator.js'
 import { runSpec, runPlan } from './runner.js'
 import { consoleReport, jsonReport, consoleSummary } from './reporter.js'
 import { resolveGlob, loadSpecFile } from './loader.js'
@@ -134,6 +134,7 @@ program
       suites: Array<
         | { id: string; name: string; path: string; type: 'spec'; tags: string[]; expectedOutcome: string }
         | { id: string; name: string; path: string; type: 'agent'; toolCount: number }
+        | { id: string; name: string; path: string; type: 'workflow'; stepCount: number; triggerKind: string }
         | { id: string; name: string; path: string; type: 'unknown'; hasError: true }
       >
     }
@@ -162,17 +163,19 @@ program
     const maxNameLen = Math.max(4, ...suites.map(s => s.name.length))
 
     console.log(`Suites at ${baseUrl}:\n`)
-    console.log(`${'ID'.padEnd(maxIdLen)}  ${'NAME'.padEnd(maxNameLen)}  ${'TYPE'.padEnd(7)}  INFO`)
-    console.log(`${'-'.repeat(maxIdLen)}  ${'-'.repeat(maxNameLen)}  ${'-------'}  ----`)
+    console.log(`${'ID'.padEnd(maxIdLen)}  ${'NAME'.padEnd(maxNameLen)}  ${'TYPE'.padEnd(10)}  INFO`)
+    console.log(`${'-'.repeat(maxIdLen)}  ${'-'.repeat(maxNameLen)}  ${'----------'}  ----`)
 
     for (const s of suites) {
       if (s.type === 'agent') {
-        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[agent]'.padEnd(7)}  ${s.toolCount} tool(s)`)
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[agent]'.padEnd(10)}  ${s.toolCount} tool(s)`)
+      } else if (s.type === 'workflow') {
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[workflow]'.padEnd(10)}  ${s.stepCount} step(s), trigger: ${s.triggerKind}`)
       } else if (s.type === 'unknown') {
-        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[error]'.padEnd(7)}  (failed to load)`)
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[error]'.padEnd(10)}  (failed to load)`)
       } else {
         const tags = s.tags.length > 0 ? s.tags.join(', ') : ''
-        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[spec]'.padEnd(7)}  ${tags}`)
+        console.log(`${s.id.padEnd(maxIdLen)}  ${s.name.padEnd(maxNameLen)}  ${'[spec]'.padEnd(10)}  ${tags}`)
       }
     }
 
@@ -211,6 +214,25 @@ program
         console.warn('')
       }
       console.log(formatAgentSpec(loaded.spec))
+      process.exit(validation.valid ? 0 : 1)
+    }
+
+    if (loaded.kind === 'workflow') {
+      const validation = validateWorkflow(loaded.spec)
+      if (!validation.valid) {
+        console.error('Validation errors:')
+        for (const err of validation.errors) {
+          console.error(`  error: ${err.message}`)
+        }
+        console.error('')
+      }
+      if (validation.warnings.length > 0) {
+        for (const warn of validation.warnings) {
+          console.warn(`  warning: ${warn.message}`)
+        }
+        console.warn('')
+      }
+      console.log(formatWorkflowSpec(loaded.spec))
       process.exit(validation.valid ? 0 : 1)
     }
 
@@ -414,6 +436,11 @@ async function runRemote(
     process.exit(1)
   }
 
+  if (artifact.planType === 'workflow') {
+    console.error(`Suite "${suiteId}" is a workflow spec. Workflow specs cannot be run with "ortheon run" — they are consumed by the orchestrator service.`)
+    process.exit(1)
+  }
+
   let result: SpecResult
   try {
     result = await runPlan(artifact.plan as ExecutionPlan, {
@@ -444,6 +471,10 @@ async function loadSpecForCli(file: string): Promise<Spec | null> {
   }
   if (result.kind === 'agent') {
     console.error(`"${file}" is an agent spec. Agent specs cannot be run directly -- use an agent runtime to consume this spec.`)
+    return null
+  }
+  if (result.kind === 'workflow') {
+    console.error(`"${file}" is a workflow spec. Workflow specs cannot be run directly -- use the orchestrator service to schedule and execute workflows.`)
     return null
   }
   return result.spec

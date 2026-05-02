@@ -24,6 +24,14 @@ import { runPlan } from '../src/runner.ts'
 import { consoleReport, consoleSummary } from '../src/reporter.ts'
 import type { ExecutionPlan, SpecResult } from '../src/types.ts'
 
+type SuiteListItem = {
+  id: string
+  name: string
+  path: string
+  type: string
+  [key: string]: unknown
+}
+
 const DEMO_PORT = 3737
 const ORTHEON_PORT = 4002
 const DEMO_BASE_URL = `http://localhost:${DEMO_PORT}`
@@ -90,7 +98,26 @@ async function fetchAndRunPlan(label: string, relativePath: string): Promise<voi
   if (result.status === 'fail') anyFailed = true
 }
 
+async function assertWorkflowListing(): Promise<void> {
+  console.log('\nChecking workflow listing in /api/suites...')
+  const res = await fetch(`${ORTHEON_BASE_URL}/api/suites`)
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} from /api/suites`)
+  }
+  const data = await res.json() as { suites: SuiteListItem[] }
+  const workflowSuites = data.suites.filter(s => s.type === 'workflow')
+  if (workflowSuites.length === 0) {
+    throw new Error('No workflow suites found in listing — expected at least one (sample-workflow.ortheon.ts)')
+  }
+  console.log(`  OK: found ${workflowSuites.length} workflow suite(s)`)
+  for (const s of workflowSuites) {
+    console.log(`    [workflow] ${s.name}  trigger: ${String(s['triggerKind'])}  steps: ${String(s['stepCount'])}`)
+  }
+}
+
 try {
+  await assertWorkflowListing()
+
   for (const { label, relativePath } of REMOTE_SPECS) {
     await fetchAndRunPlan(label, relativePath)
   }
