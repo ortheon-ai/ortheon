@@ -2,12 +2,13 @@ import express from "express";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, compileAgent, flattenTools, formatExpandedPlan, formatAgentPlan } from "../compiler.js";
-import { validate, validateAgent } from "../validator.js";
+import { compile, compileAgent, compileWorkflow, flattenTools, formatExpandedPlan, formatAgentPlan, formatWorkflowPlan } from "../compiler.js";
+import { validate, validateAgent, validateWorkflow } from "../validator.js";
 import { loadSpecFile } from "../loader.js";
 import type {
   AgentSpec,
   Spec,
+  WorkflowSpec,
   ExecutableStep,
   BrowserStep,
   ApiContract,
@@ -36,9 +37,10 @@ export type ServerSuite = {
   name: string;
   path: string;
   relativePath: string;
-  kind: "spec" | "agent" | null;
+  kind: "spec" | "agent" | "workflow" | null;
   spec: Spec | null;
   agentSpec: AgentSpec | null;
+  workflowSpec: WorkflowSpec | null;
   loadError: string | null;
 };
 
@@ -105,6 +107,10 @@ function countSteps(spec: Spec): number {
 
 function isAgentSuite(s: ServerSuite): s is ServerSuite & { kind: "agent"; agentSpec: AgentSpec } {
   return s.kind === "agent" && s.agentSpec !== null;
+}
+
+function isWorkflowSuite(s: ServerSuite): s is ServerSuite & { kind: "workflow"; workflowSpec: WorkflowSpec } {
+  return s.kind === "workflow" && s.workflowSpec !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +204,17 @@ export function createApp(suites: ServerSuite[]): express.Application {
           hasError: false,
         };
       }
+      if (isWorkflowSuite(s)) {
+        return {
+          id: s.id,
+          name: s.name,
+          path: s.relativePath,
+          type: "workflow" as const,
+          stepCount: s.workflowSpec.steps.length,
+          triggerKind: s.workflowSpec.trigger.kind,
+          hasError: false,
+        };
+      }
       return {
         id: s.id,
         name: s.name,
@@ -223,7 +240,7 @@ export function createApp(suites: ServerSuite[]): express.Application {
       res.status(404).json({ error: "Suite not found" });
       return;
     }
-    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null)) {
+    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null && suite.workflowSpec === null)) {
       res.status(500).json({ error: suite.loadError ?? "Failed to load spec" });
       return;
     }
@@ -238,6 +255,24 @@ export function createApp(suites: ServerSuite[]): express.Application {
         type: "agent",
         toolNames: tools.map((t) => t.name),
         toolCount: tools.length,
+      });
+      return;
+    }
+
+    if (isWorkflowSuite(suite)) {
+      const { workflowSpec } = suite;
+      res.json({
+        id: suite.id,
+        name: workflowSpec.name,
+        path: suite.relativePath,
+        type: "workflow",
+        trigger: workflowSpec.trigger,
+        stepNames: workflowSpec.steps.map((s) => s.specName),
+        stepCount: workflowSpec.steps.length,
+        gateCount: workflowSpec.steps.reduce(
+          (n, s) => n + (s.approveBefore ? 1 : 0) + (s.approveAfter ? 1 : 0),
+          0,
+        ),
       });
       return;
     }
@@ -274,8 +309,33 @@ export function createApp(suites: ServerSuite[]): express.Application {
       res.status(404).json({ error: "Suite not found" });
       return;
     }
-    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null)) {
+    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null && suite.workflowSpec === null)) {
       res.status(500).json({ error: suite.loadError ?? "Failed to load spec" });
+      return;
+    }
+
+    // Workflow spec browse plan
+    if (isWorkflowSuite(suite)) {
+      let workflowPlan: ReturnType<typeof compileWorkflow>;
+      try {
+        workflowPlan = compileWorkflow(suite.workflowSpec);
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+        return;
+      }
+      const validation = validateWorkflow(suite.workflowSpec);
+      res.json({
+        planType: "workflow",
+        specName: workflowPlan.specName,
+        trigger: workflowPlan.trigger,
+        steps: workflowPlan.steps,
+        gates: workflowPlan.gates,
+        validation: {
+          errors: validation.errors.map((e) => e.message),
+          warnings: validation.warnings.map((w) => w.message),
+        },
+        renderedPlan: formatWorkflowPlan(workflowPlan),
+      });
       return;
     }
 
@@ -376,8 +436,30 @@ export function createApp(suites: ServerSuite[]): express.Application {
       res.status(404).json({ error: "Suite not found" });
       return;
     }
-    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null)) {
+    if (suite.loadError !== null || (suite.spec === null && suite.agentSpec === null && suite.workflowSpec === null)) {
       res.status(500).json({ error: suite.loadError ?? "Failed to load spec" });
+      return;
+    }
+
+    // Workflow spec execution plan
+    if (isWorkflowSuite(suite)) {
+      let workflowPlan: ReturnType<typeof compileWorkflow>;
+      try {
+        workflowPlan = compileWorkflow(suite.workflowSpec);
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+        return;
+      }
+      const validation = validateWorkflow(suite.workflowSpec);
+      res.json({
+        planType: "workflow",
+        planVersion: 1,
+        plan: workflowPlan,
+        validation: {
+          errors: validation.errors.map((e) => e.message),
+          warnings: validation.warnings.map((w) => w.message),
+        },
+      });
       return;
     }
 
@@ -509,6 +591,7 @@ export async function discoverSuites(
         kind: "spec",
         spec: loaded.spec,
         agentSpec: null,
+        workflowSpec: null,
         loadError: null,
       });
     } else if (loaded.kind === "agent") {
@@ -520,6 +603,19 @@ export async function discoverSuites(
         kind: "agent",
         spec: null,
         agentSpec: loaded.spec,
+        workflowSpec: null,
+        loadError: null,
+      });
+    } else if (loaded.kind === "workflow") {
+      suites.push({
+        id,
+        name: loaded.spec.name,
+        path: absPath,
+        relativePath: rel,
+        kind: "workflow",
+        spec: null,
+        agentSpec: null,
+        workflowSpec: loaded.spec,
         loadError: null,
       });
     } else {
@@ -531,6 +627,7 @@ export async function discoverSuites(
         kind: null,
         spec: null,
         agentSpec: null,
+        workflowSpec: null,
         loadError: loaded.error,
       });
     }

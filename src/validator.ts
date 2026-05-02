@@ -20,6 +20,7 @@ import type {
   Toolset,
   UseStep,
   ValidationResult,
+  WorkflowSpec,
 } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -674,4 +675,90 @@ export function validate(spec: Spec, plan?: ExecutionPlan): ValidationResult {
     errors: [...pass1.errors, ...pass2.errors],
     warnings: [...pass1.warnings, ...pass2.warnings],
   }
+}
+
+// ---------------------------------------------------------------------------
+// Workflow validator
+// ---------------------------------------------------------------------------
+
+// Five-field standard cron expression: min hour dom month dow
+// Each field may be a number, *, or simple range/step (good enough for validation;
+// the orchestrator performs the authoritative parse via croniter).
+const CRON_FIELD_RE = /^(\*|(\d+(-\d+)?(\/\d+)?|\*\/\d+)(,(\d+(-\d+)?(\/\d+)?|\*\/\d+))*)$/
+
+function isValidCronExpr(expr: string): boolean {
+  const fields = expr.trim().split(/\s+/)
+  if (fields.length !== 5) return false
+  return fields.every(f => CRON_FIELD_RE.test(f))
+}
+
+export function validateWorkflow(spec: WorkflowSpec): ValidationResult {
+  const errors: Diagnostic[] = []
+  const warnings: Diagnostic[] = []
+
+  if (spec.steps.length === 0) {
+    errors.push({ severity: 'error', message: 'workflow must have at least one step' })
+  }
+
+  const { trigger } = spec
+  const validTriggerKinds = new Set(['discussion', 'cron', 'manual', 'spawn'])
+
+  if (!validTriggerKinds.has(trigger.kind)) {
+    errors.push({
+      severity: 'error',
+      message: `unknown trigger kind: "${(trigger as { kind: string }).kind}". Valid kinds: ${[...validTriggerKinds].join(', ')}`,
+    })
+  } else {
+    switch (trigger.kind) {
+      case 'discussion':
+        if (!trigger.category || typeof trigger.category !== 'string' || !trigger.category.trim()) {
+          errors.push({ severity: 'error', message: 'trigger.discussion requires a non-empty category' })
+        }
+        break
+      case 'cron':
+        if (!isValidCronExpr(trigger.expr)) {
+          errors.push({
+            severity: 'error',
+            message: `trigger.cron expr "${trigger.expr}" is not a valid 5-field cron expression (min hour dom month dow)`,
+          })
+        }
+        break
+      case 'spawn':
+        if (typeof trigger.maxDepth !== 'number' || !Number.isInteger(trigger.maxDepth) || trigger.maxDepth < 1) {
+          errors.push({ severity: 'error', message: 'trigger.spawn requires maxDepth >= 1' })
+        }
+        break
+      case 'manual':
+        break
+    }
+  }
+
+  for (let i = 0; i < spec.steps.length; i++) {
+    const s = spec.steps[i]!
+    const loc = `step[${i}]`
+
+    if (s.kind !== 'agent') {
+      errors.push({
+        severity: 'error',
+        message: `${loc}: unknown step kind "${(s as { kind: string }).kind}". Currently only "agent" steps are supported`,
+      })
+      continue
+    }
+
+    if (!KEBAB_RE.test(s.specName)) {
+      errors.push({
+        severity: 'error',
+        message: `${loc}: specName "${s.specName}" must be kebab-case (lowercase letters, digits, hyphens; must start with a letter or digit)`,
+      })
+    }
+
+    if (i === 0 && s.approveBefore) {
+      errors.push({
+        severity: 'error',
+        message: `${loc}: approveBefore on the first step is not allowed — there is no upstream agent to gate on`,
+      })
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings }
 }

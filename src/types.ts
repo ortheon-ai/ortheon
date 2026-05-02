@@ -293,6 +293,7 @@ export type ConversationTool = {
   source?: MatchSource    // which message source may emit this command; defaults to 'llm'
   args?: ArgSpec
   prompt?: Resolvable<string>  // injected instruction returned to the caller on dispatch
+  requires_approval?: boolean  // if true, the agent runtime must pause for external approval before executing
 }
 
 // Named group of tools for sharing across agents.
@@ -322,6 +323,7 @@ export type SerializedTool = {
   source: MatchSource     // always explicit in plan (defaulted from 'llm' during compile)
   args?: ArgSpec
   prompt?: Resolvable<string>
+  requires_approval?: boolean  // propagated from ConversationTool during compile; omitted when false/unset
 }
 
 export type AgentPlan = {
@@ -396,4 +398,42 @@ export type ApiResponse = {
   status: number
   headers: Record<string, string>
   body: unknown
+}
+
+// ---------------------------------------------------------------------------
+// Workflow spec types
+// ---------------------------------------------------------------------------
+
+export type WorkflowTrigger =
+  | { kind: 'discussion'; category: string; command?: string }
+  | { kind: 'cron'; expr: string }
+  | { kind: 'manual' }
+  | { kind: 'spawn'; maxDepth: number }
+
+export type WorkflowStep = {
+  kind: 'agent'
+  specName: string
+  approveBefore?: boolean
+  approveAfter?: boolean
+}
+
+// Derived from WorkflowSpec.steps: one entry per gate declared in the step list.
+export type GateDescriptor = {
+  stepIndex: number
+  position: 'before' | 'after'
+}
+
+export type WorkflowSpec = {
+  __type: 'workflow'
+  name: string
+  trigger: WorkflowTrigger
+  steps: WorkflowStep[]
+}
+
+export type WorkflowPlan = {
+  specName: string
+  trigger: WorkflowTrigger
+  steps: WorkflowStep[]
+  // Flat list of all approval gates derived from the steps.
+  gates: GateDescriptor[]
 }

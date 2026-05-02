@@ -170,6 +170,31 @@ const result = runAgentStep(plan, { text: llmReply, source: "llm" });
 
 See [docs/agents.md](docs/agents.md) for the full reference.
 
+## Workflow specs
+
+Ortheon also supports **workflow specs** — declarative pipelines that chain agent specs together, triggered by a GitHub Discussion, a cron schedule, a manual dispatch, or a spawn from another agent.
+
+Where an agent spec describes what a single LLM-driven agent may do, a workflow spec describes the sequence of agents that should run and where human approval gates are required between them.
+
+```ts
+import { workflow, trigger, workflowStep } from "ortheon";
+
+export default workflow("feature-pipeline", {
+  trigger: trigger.discussion({ category: "releases", command: "/ship" }),
+  steps: [
+    workflowStep.agent("plan-agent"),
+    workflowStep.agent("review-agent",  { approveBefore: true }),
+    workflowStep.agent("deploy-agent",  { approveBefore: true, approveAfter: true }),
+  ],
+});
+```
+
+Workflow specs are **declarative metadata only**. Ortheon compiles and serves them but never executes them. Execution is the responsibility of the orchestrator service (schedules runs, responds to triggers) and cmdland (drives the agent loop and parks on approval gates).
+
+`ortheon expand` prints the compiled plan. `ortheon serve` exposes workflow plans through the same API routes as behavioral and agent plans.
+
+See [docs/workflows.md](docs/workflows.md) for the full reference.
+
 ## Installation
 
 ```bash
@@ -550,6 +575,17 @@ Five only. No matcher jungle.
 | `tool(name, config)` | Command declaration |
 | `toolset(name, tools)` | Named, shareable group of tools that can be composed into one or more agent specs |
 
+### Workflow spec primitives
+
+| Function | Purpose |
+| -------- | ------- |
+| `workflow(name, config)` | Top-level workflow spec |
+| `trigger.discussion({ category, command? })` | Fire when a GitHub Discussion is opened in the given category |
+| `trigger.cron(expr)` | Fire on a 5-field cron schedule (`min hour dom month dow`) |
+| `trigger.manual()` | Fire only when explicitly dispatched |
+| `trigger.spawn({ maxDepth })` | Fire when another agent spawns this workflow |
+| `workflowStep.agent(specName, config?)` | Declare a step that runs the named agent spec, with optional `approveBefore` / `approveAfter` gates |
+
 **`agent()` config:**
 
 | Field | Type | Description |
@@ -792,6 +828,9 @@ ortheon/
   agents/           # Agent specs
     bug-reports.ortheon.ts
     support-triage.ortheon.ts
+  workflows/        # Workflow specs (trigger + agent pipeline)
+    feature-pipeline.ortheon.ts
+    nightly-report.ortheon.ts
   environments/     # Environment configs (optional)
     staging.ts
 ```

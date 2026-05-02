@@ -7,7 +7,7 @@ Declarative behavioral spec framework. Two executable primitives: `browser(...)`
 ```
 src/
   types.ts           Type system (all types in one file)
-  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret, bearer, existsCheck, agent, tool, toolset
+  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret, bearer, existsCheck, agent, tool, toolset, workflow, trigger, workflowStep
   compiler.ts        Expand use(), resolve contracts, flatten sections → ExecutionPlan
   validator.ts       Two-pass validation (structural on AST, ref resolution on expanded plan)
   runner.ts          Sequential step execution with retry, save, assert; runSpec() + runPlan()
@@ -41,6 +41,8 @@ tests/               Vitest unit tests (context, assert, compiler, validator, go
 - **[README.md](README.md)** -- Installation, quick start, full DSL reference, CLI reference, auth model, scaling doctrine, recommended file structure.
 - **[docs/architecture.md](docs/architecture.md)** -- Four-layer architecture (authoring, compilation, execution, server), compiler internals (contract resolution, use() expansion, compile-time ref substitution), validator passes, runtime context mechanics, executor details, server layer (trust boundary, plan distribution, execution-plan artifact), key design decisions.
 - **[docs/writing-specs.md](docs/writing-specs.md)** -- Practical authoring guide: contracts, data catalogs, flows, API steps, browser steps, assertions, retries, naming conventions, what not to do.
+- **[docs/agents.md](docs/agents.md)** -- Agent spec full reference: tool config, toolset composition, runAgentStep(), command parsing rules, validation, server integration.
+- **[docs/workflows.md](docs/workflows.md)** -- Workflow spec full reference: trigger builders, workflowStep builders, compileWorkflow(), validateWorkflow(), server integration.
 
 ## Architecture: server vs CLI
 

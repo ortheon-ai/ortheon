@@ -22,13 +22,17 @@ export {
   agent,
   tool,
   toolset,
+  // Workflow spec builders
+  workflow,
+  trigger,
+  workflowStep,
 } from './dsl.js'
 
 // Runtime
 export { runSpec, runPlan, runAgentStep } from './runner.js'
 export type { RunOptions, RunPlanOptions } from './runner.js'
-export { compile, compileAgent, formatExpandedPlan, formatAgentPlan, formatAgentSpec, formatCommandReference } from './compiler.js'
-export { validate, validateStructure, validateExpandedPlan, validateAgent, validateToolset } from './validator.js'
+export { compile, compileAgent, compileWorkflow, formatExpandedPlan, formatAgentPlan, formatAgentSpec, formatCommandReference, formatWorkflowSpec, formatWorkflowPlan } from './compiler.js'
+export { validate, validateStructure, validateExpandedPlan, validateAgent, validateToolset, validateWorkflow } from './validator.js'
 export { RuntimeContext } from './context.js'
 
 // Reporters
@@ -82,4 +86,10 @@ export type {
   AgentMessage,
   ToolCallResult,
   AgentStepResult,
+  // Workflow spec types
+  WorkflowSpec,
+  WorkflowPlan,
+  WorkflowTrigger,
+  WorkflowStep,
+  GateDescriptor,
 } from './types.js'
