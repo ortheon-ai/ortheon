@@ -692,8 +692,6 @@ function isValidCronExpr(expr: string): boolean {
   return fields.every(f => CRON_FIELD_RE.test(f))
 }
 
-const KEBAB_SPEC_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
-
 export function validateWorkflow(spec: WorkflowSpec): ValidationResult {
   const errors: Diagnostic[] = []
   const warnings: Diagnostic[] = []
@@ -747,7 +745,7 @@ export function validateWorkflow(spec: WorkflowSpec): ValidationResult {
       continue
     }
 
-    if (!KEBAB_SPEC_NAME_RE.test(s.specName)) {
+    if (!KEBAB_RE.test(s.specName)) {
       errors.push({
         severity: 'error',
         message: `${loc}: specName "${s.specName}" must be kebab-case (lowercase letters, digits, hyphens; must start with a letter or digit)`,
