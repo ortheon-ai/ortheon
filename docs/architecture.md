@@ -236,6 +236,25 @@ Console reporter prints section-grouped output with pass/fail icons and duration
 
 The server never sees the user's environment variables or secrets. The CLI resolves `env()` and `secret()` markers from its own process environment at execution time.
 
+### Middleware seam
+
+`createApp(suites, opts?)` and `startServer(suites, port, opts?)` accept an optional `opts.middleware` array of Express `RequestHandler` functions. Middleware is mounted **after** `express.json()` and **before** every route handler, so it sees all API requests.
+
+`ortheon serve` exposes this via `--auth-module <path>`: the module at that path must export a `default` function that returns a `RequestHandler`. Ortheon itself ships no authentication logic; callers supply their own.
+
+```ts
+// Example: anonlogin bearer-token middleware
+import { anonloginAuth } from "./auth/anonlogin.js";
+export default function () {
+  return anonloginAuth({
+    anonloginUrl: process.env.ORTHEON_ANONLOGIN_URL!,
+    operatorAccountId: process.env.ORTHEON_OPERATOR_ACCOUNT_ID!,
+  });
+}
+```
+
+`startServer` also accepts `opts.host` to bind to a specific interface (default: all interfaces). The CLI exposes this as `--host <addr>`.
+
 ### Suite discovery
 
 `discoverSuites()` runs once at startup against the glob passed to `ortheon serve`. Each matched file is dynamically imported (`import(path)`), the default export is compiled and validated, and a summary is cached. Suite IDs are base64url-encoded relative file paths — stable and URL-safe.

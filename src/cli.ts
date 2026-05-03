@@ -11,10 +11,14 @@
 // https://specs.example.ts ends in ".ts" but is not a TypeScript file.
 const needsTsx = (() => {
   if (process.env['__ORTHEON_TSX']) return false
-  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--retries'])
+
+  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--retries', '--host', '--auth-module'])
+  // Flags whose values are always file paths, not URLs — safe to inspect for .ts/.tsx.
+  const filePathFlags = new Set(['--auth-module'])
   const variadicFlags = new Set(['--tag'])
   const args = process.argv.slice(2)
   const positional: string[] = []
+  const tsCheckValues: string[] = []
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!
     if (a.startsWith('-')) {
@@ -22,12 +26,16 @@ const needsTsx = (() => {
         while (i + 1 < args.length && !args[i + 1]!.startsWith('-')) i++
       } else if (flagsWithValues.has(a)) {
         i++
+        if (filePathFlags.has(a) && i < args.length) {
+          tsCheckValues.push(args[i]!)
+        }
       }
     } else {
       positional.push(a)
     }
   }
-  return positional.some(a => a.endsWith('.ts') || a.endsWith('.tsx'))
+  const isTsArg = (a: string) => a.endsWith('.ts') || a.endsWith('.tsx')
+  return positional.some(isTsArg) || tsCheckValues.some(isTsArg)
 })()
 
 if (needsTsx) {
@@ -60,6 +68,8 @@ if (needsTsx) {
 
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { compile, formatExpandedPlan, formatAgentSpec, formatWorkflowSpec } from './compiler.js'
 import { validate, validateAgent, validateWorkflow } from './validator.js'
 import { runSpec, runPlan } from './runner.js'
@@ -265,8 +275,12 @@ program
   .command('serve <glob>')
   .description('Start the Ortheon web server for browsing and distributing specs')
   .option('--port <port>', 'Port to listen on', '4000')
+  .option('--host <host>', 'Host/interface to bind to (default: all interfaces)')
+  .option('--auth-module <path>', 'Path to a JS/TS module whose default export is a function that returns an Express RequestHandler for auth')
   .action(async (glob: string, options: {
     port: string
+    host?: string
+    authModule?: string
   }) => {
     const port = parseInt(options.port, 10)
     if (isNaN(port) || port < 1 || port > 65535) {
@@ -275,12 +289,34 @@ program
     }
 
     const cwd = process.cwd()
-    const serverUrl = `http://localhost:${port}`
+    const displayHost = (h: string) => h.includes(':') ? `[${h}]` : h
+    const serverUrl = `http://${displayHost(options.host ?? 'localhost')}:${port}`
 
     // ORTHEON_SERVER_URL is set so specs that call the server API know its address.
     process.env['ORTHEON_SERVER_URL'] ??= serverUrl
 
     const { discoverSuites, startServer } = await import('./server/app.js')
+
+    // Optionally load a caller-supplied auth middleware.
+    type RequestHandler = import('express').RequestHandler
+    const middleware: RequestHandler[] = []
+    if (options.authModule) {
+      try {
+        const absPath = pathToFileURL(resolve(cwd, options.authModule)).href
+        const mod = await import(absPath)
+        const factory: () => RequestHandler =
+          typeof mod.default === 'function' ? mod.default : mod.default?.default
+        if (typeof factory !== 'function') {
+          console.error(`--auth-module: module at ${options.authModule} does not export a default function`)
+          process.exit(1)
+        }
+        middleware.push(factory())
+        console.log(`Auth middleware loaded from: ${options.authModule}`)
+      } catch (err) {
+        console.error(`--auth-module: failed to load ${options.authModule}: ${(err as Error).message}`)
+        process.exit(1)
+      }
+    }
 
     console.log(`Discovering specs matching: ${glob}`)
     const suites = await discoverSuites(glob, cwd)
@@ -290,7 +326,10 @@ program
       process.exit(1)
     }
 
-    await startServer(suites, port)
+    const serveOpts = options.host !== undefined
+      ? { middleware, host: options.host }
+      : { middleware }
+    await startServer(suites, port, serveOpts)
   })
 
 // ---------------------------------------------------------------------------
