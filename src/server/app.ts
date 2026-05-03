@@ -1,4 +1,5 @@
 import express from "express";
+import type { RequestHandler } from "express";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,12 +115,27 @@ function isWorkflowSuite(s: ServerSuite): s is ServerSuite & { kind: "workflow";
 }
 
 // ---------------------------------------------------------------------------
+// Server options
+// ---------------------------------------------------------------------------
+
+export type ServerOptions = {
+  /** Additional Express middleware to mount after json parsing, before routes. */
+  middleware?: RequestHandler[];
+  /** Host / interface to bind the HTTP server to (default: all interfaces). */
+  host?: string | undefined;
+};
+
+// ---------------------------------------------------------------------------
 // Express app factory
 // ---------------------------------------------------------------------------
 
-export function createApp(suites: ServerSuite[]): express.Application {
+export function createApp(suites: ServerSuite[], opts: ServerOptions = {}): express.Application {
   const app = express();
   app.use(express.json());
+
+  for (const mw of opts.middleware ?? []) {
+    app.use(mw);
+  }
 
   const suiteMap = new Map<string, ServerSuite>();
   for (const s of suites) suiteMap.set(s.id, s);
@@ -643,15 +659,19 @@ export async function discoverSuites(
 export async function startServer(
   suites: ServerSuite[],
   port = 4000,
+  opts: ServerOptions = {},
 ): Promise<ReturnType<typeof createServer>> {
-  const app = createApp(suites);
+  const app = createApp(suites, opts);
 
   return new Promise((resolve, reject) => {
     const server = createServer(app);
     server.on("error", reject);
-    server.listen(port, () => {
+    const host = opts.host;
+
+    const onListening = () => {
       server.off("error", reject);
-      console.log(`Ortheon server running at http://localhost:${port}`);
+      const displayAddr = host ?? "localhost";
+      console.log(`Ortheon server running at http://${displayAddr}:${port}`);
       console.log(`Serving ${suites.length} spec(s)`);
       suites
         .filter((s) => s.loadError !== null)
@@ -661,6 +681,12 @@ export async function startServer(
           ),
         );
       resolve(server);
-    });
+    };
+
+    if (host !== undefined) {
+      server.listen(port, host, onListening);
+    } else {
+      server.listen(port, onListening);
+    }
   });
 }

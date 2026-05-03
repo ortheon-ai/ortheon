@@ -265,8 +265,12 @@ program
   .command('serve <glob>')
   .description('Start the Ortheon web server for browsing and distributing specs')
   .option('--port <port>', 'Port to listen on', '4000')
+  .option('--host <host>', 'Host/interface to bind to (default: all interfaces)')
+  .option('--auth-module <path>', 'Path to a JS/TS module whose default export is a function that returns an Express RequestHandler for auth')
   .action(async (glob: string, options: {
     port: string
+    host?: string
+    authModule?: string
   }) => {
     const port = parseInt(options.port, 10)
     if (isNaN(port) || port < 1 || port > 65535) {
@@ -275,12 +279,33 @@ program
     }
 
     const cwd = process.cwd()
-    const serverUrl = `http://localhost:${port}`
+    const bindHost = options.host ?? '0.0.0.0'
+    const serverUrl = `http://${bindHost}:${port}`
 
     // ORTHEON_SERVER_URL is set so specs that call the server API know its address.
     process.env['ORTHEON_SERVER_URL'] ??= serverUrl
 
     const { discoverSuites, startServer } = await import('./server/app.js')
+
+    // Optionally load a caller-supplied auth middleware.
+    type RequestHandler = import('express').RequestHandler
+    const middleware: RequestHandler[] = []
+    if (options.authModule) {
+      try {
+        const mod = await import(options.authModule)
+        const factory: () => RequestHandler =
+          typeof mod.default === 'function' ? mod.default : mod.default?.default
+        if (typeof factory !== 'function') {
+          console.error(`--auth-module: module at ${options.authModule} does not export a default function`)
+          process.exit(1)
+        }
+        middleware.push(factory())
+        console.log(`Auth middleware loaded from: ${options.authModule}`)
+      } catch (err) {
+        console.error(`--auth-module: failed to load ${options.authModule}: ${(err as Error).message}`)
+        process.exit(1)
+      }
+    }
 
     console.log(`Discovering specs matching: ${glob}`)
     const suites = await discoverSuites(glob, cwd)
@@ -290,7 +315,10 @@ program
       process.exit(1)
     }
 
-    await startServer(suites, port)
+    const serveOpts = options.host !== undefined
+      ? { middleware, host: options.host }
+      : { middleware }
+    await startServer(suites, port, serveOpts)
   })
 
 // ---------------------------------------------------------------------------

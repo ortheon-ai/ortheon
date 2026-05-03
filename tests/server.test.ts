@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import type { RequestHandler } from 'express'
 import { spec, flow, step, api, expect as orthExpect, ref, workflow, trigger, workflowStep } from '../src/dsl.js'
 import { createApp, encodeSuiteId, decodeSuiteId, type ServerSuite } from '../src/server/app.js'
 import type { Spec, WorkflowSpec } from '../src/types.js'
@@ -118,9 +119,12 @@ type TestServer = {
   close: () => Promise<void>
 }
 
-function startTestServer(suites: ServerSuite[]): Promise<TestServer> {
+function startTestServer(
+  suites: ServerSuite[],
+  middleware?: RequestHandler[],
+): Promise<TestServer> {
   return new Promise((resolve, reject) => {
-    const app = createApp(suites)
+    const app = createApp(suites, { middleware })
     const server = createServer(app)
 
     server.on('error', reject)
@@ -747,5 +751,49 @@ describe('SPA fallback', () => {
     expect(res.status).toBe(200)
     const text = await res.text()
     expect(text).toContain('<title>Ortheon</title>')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Middleware hook
+// ---------------------------------------------------------------------------
+
+describe('middleware hook', () => {
+  it('supplied middleware runs before route handlers and can reject requests', async () => {
+    const rejectAll: RequestHandler = (_req, res, _next) => {
+      res.status(401).json({ error: 'unauthorized' })
+    }
+    const srv = await startTestServer([makeSuite('s1', healthSpec)], [rejectAll])
+
+    try {
+      // Any API route should be blocked by the middleware.
+      const res = await fetch(`${srv.baseUrl}/api/suites`)
+      expect(res.status).toBe(401)
+      const body = await res.json() as Record<string, unknown>
+      expect(body['error']).toBe('unauthorized')
+
+      // A second route to confirm middleware applies broadly.
+      const res2 = await fetch(`${srv.baseUrl}/api/contracts`)
+      expect(res2.status).toBe(401)
+    } finally {
+      await srv.close()
+    }
+  })
+
+  it('middleware that calls next() allows requests through', async () => {
+    let sawRequest = false
+    const passThrough: RequestHandler = (_req, _res, next) => {
+      sawRequest = true
+      next()
+    }
+    const srv = await startTestServer([makeSuite('s1', healthSpec)], [passThrough])
+
+    try {
+      const res = await fetch(`${srv.baseUrl}/api/suites`)
+      expect(res.status).toBe(200)
+      expect(sawRequest).toBe(true)
+    } finally {
+      await srv.close()
+    }
   })
 })
