@@ -10,6 +10,7 @@
 // Flag values (e.g. URLs passed to --from) must be skipped — a URL like
 // https://specs.example.ts ends in ".ts" but is not a TypeScript file.
 const needsTsx = (() => {
+  if (process.env['__ORTHEON_TSX']) return false
 
   const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--retries', '--host', '--auth-module'])
   // Flags whose values are always file paths, not URLs — safe to inspect for .ts/.tsx.
