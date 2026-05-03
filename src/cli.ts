@@ -10,11 +10,14 @@
 // Flag values (e.g. URLs passed to --from) must be skipped — a URL like
 // https://specs.example.ts ends in ".ts" but is not a TypeScript file.
 const needsTsx = (() => {
-  if (process.env['__ORTHEON_TSX']) return false
+
   const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--retries', '--host', '--auth-module'])
+  // Flags whose values are always file paths, not URLs — safe to inspect for .ts/.tsx.
+  const filePathFlags = new Set(['--auth-module'])
   const variadicFlags = new Set(['--tag'])
   const args = process.argv.slice(2)
   const positional: string[] = []
+  const tsCheckValues: string[] = []
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!
     if (a.startsWith('-')) {
@@ -22,12 +25,16 @@ const needsTsx = (() => {
         while (i + 1 < args.length && !args[i + 1]!.startsWith('-')) i++
       } else if (flagsWithValues.has(a)) {
         i++
+        if (filePathFlags.has(a) && i < args.length) {
+          tsCheckValues.push(args[i]!)
+        }
       }
     } else {
       positional.push(a)
     }
   }
-  return positional.some(a => a.endsWith('.ts') || a.endsWith('.tsx'))
+  const isTsArg = (a: string) => a.endsWith('.ts') || a.endsWith('.tsx')
+  return positional.some(isTsArg) || tsCheckValues.some(isTsArg)
 })()
 
 if (needsTsx) {
