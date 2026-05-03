@@ -11,7 +11,7 @@
 // https://specs.example.ts ends in ".ts" but is not a TypeScript file.
 const needsTsx = (() => {
   if (process.env['__ORTHEON_TSX']) return false
-  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--retries'])
+  const flagsWithValues = new Set(['--from', '--suite', '--reporter', '--timeout', '--port', '--retries', '--host', '--auth-module'])
   const variadicFlags = new Set(['--tag'])
   const args = process.argv.slice(2)
   const positional: string[] = []
@@ -60,6 +60,8 @@ if (needsTsx) {
 
 import { program } from 'commander'
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { compile, formatExpandedPlan, formatAgentSpec, formatWorkflowSpec } from './compiler.js'
 import { validate, validateAgent, validateWorkflow } from './validator.js'
 import { runSpec, runPlan } from './runner.js'
@@ -279,8 +281,7 @@ program
     }
 
     const cwd = process.cwd()
-    const bindHost = options.host ?? '0.0.0.0'
-    const serverUrl = `http://${bindHost}:${port}`
+    const serverUrl = `http://${options.host ?? 'localhost'}:${port}`
 
     // ORTHEON_SERVER_URL is set so specs that call the server API know its address.
     process.env['ORTHEON_SERVER_URL'] ??= serverUrl
@@ -292,7 +293,8 @@ program
     const middleware: RequestHandler[] = []
     if (options.authModule) {
       try {
-        const mod = await import(options.authModule)
+        const absPath = pathToFileURL(resolve(cwd, options.authModule)).href
+        const mod = await import(absPath)
         const factory: () => RequestHandler =
           typeof mod.default === 'function' ? mod.default : mod.default?.default
         if (typeof factory !== 'function') {
