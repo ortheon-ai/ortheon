@@ -671,7 +671,8 @@ export async function startServer(
     const onListening = () => {
       server.off("error", reject);
       const displayAddr = host ?? "localhost";
-      console.log(`Ortheon server running at http://${displayAddr}:${port}`);
+      const displayHost = (h: string) => h.includes(":") ? `[${h}]` : h;
+      console.log(`Ortheon server running at http://${displayHost(displayAddr)}:${port}`);
       console.log(`Serving ${suites.length} spec(s)`);
       suites
         .filter((s) => s.loadError !== null)

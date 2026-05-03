@@ -289,7 +289,8 @@ program
     }
 
     const cwd = process.cwd()
-    const serverUrl = `http://${options.host ?? 'localhost'}:${port}`
+    const displayHost = (h: string) => h.includes(':') ? `[${h}]` : h
+    const serverUrl = `http://${displayHost(options.host ?? 'localhost')}:${port}`
 
     // ORTHEON_SERVER_URL is set so specs that call the server API know its address.
     process.env['ORTHEON_SERVER_URL'] ??= serverUrl
