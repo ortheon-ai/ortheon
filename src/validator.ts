@@ -658,6 +658,52 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
 }
 
 // ---------------------------------------------------------------------------
+// validateWorkflowCollection: cross-spec uniqueness check
+//
+// Workflow trigger keys must be unique across all loaded workflows.
+// A key is the tuple (trigger.kind, category?, command?).
+// Duplicate keys cause the orchestrator to fan-out to multiple runs on a
+// single event, which is almost never intended (§4.4).
+// ---------------------------------------------------------------------------
+
+export function validateWorkflowCollection(specs: WorkflowSpec[]): ValidationResult {
+  const errors: Diagnostic[] = []
+  const warnings: Diagnostic[] = []
+
+  const seen = new Map<string, string>()
+
+  for (const spec of specs) {
+    const { trigger } = spec
+    let key: string
+
+    if (trigger.kind === 'discussion') {
+      const command = 'command' in trigger ? (trigger as { command?: string }).command ?? '' : ''
+      key = `discussion:${trigger.category}:${command}`
+    } else if (trigger.kind === 'cron') {
+      key = `cron:${(trigger as { expr: string }).expr}`
+    } else if (trigger.kind === 'spawn') {
+      key = `spawn:${spec.name}`
+    } else {
+      key = `${trigger.kind}:${spec.name}`
+    }
+
+    const existing = seen.get(key)
+    if (existing !== undefined) {
+      errors.push({
+        severity: 'error',
+        message: `Workflow trigger key collision: "${spec.name}" and "${existing}" share the same trigger key "${key}". ` +
+          `This causes the orchestrator to start multiple runs for a single event. ` +
+          `Ensure each workflow has a unique (trigger.kind, category, command?) combination.`,
+      })
+    } else {
+      seen.set(key, spec.name)
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings }
+}
+
+// ---------------------------------------------------------------------------
 // Combined validate function
 // ---------------------------------------------------------------------------
 
