@@ -688,8 +688,18 @@ export async function startServer(
         .map((s) => s.workflowSpec as WorkflowSpec);
       if (workflowSpecs.length > 0) {
         const collectionResult = validateWorkflowCollection(workflowSpecs);
-        for (const err of collectionResult.errors) {
-          console.error(`  ERROR: ${err.message}`);
+        if (collectionResult.errors.length > 0) {
+          for (const err of collectionResult.errors) {
+            console.error(`  ERROR: ${err.message}`);
+          }
+          server.close();
+          reject(
+            new Error(
+              `Duplicate workflow trigger keys detected — fix spec collisions before starting: ` +
+                collectionResult.errors.map((e) => e.message).join("; "),
+            ),
+          );
+          return;
         }
       }
 
