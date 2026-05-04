@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { workflow, trigger, workflowStep } from '../src/dsl.js'
-import { validateWorkflow } from '../src/validator.js'
+import { validateWorkflow, validateWorkflowCollection } from '../src/validator.js'
 
 describe('validateWorkflow', () => {
   it('passes a valid discussion-trigger workflow', () => {
@@ -118,6 +118,39 @@ describe('validateWorkflow', () => {
     })
     const result = validateWorkflow(spec)
     expect(result.valid).toBe(true)
+  })
+
+  describe('validateWorkflowCollection (cross-spec uniqueness)', () => {
+    it('passes when all trigger keys are unique', () => {
+      const specs = [
+        workflow('wf-a', { trigger: trigger.discussion({ category: 'Releases' }), steps: [workflowStep.agent('agent-a')] }),
+        workflow('wf-b', { trigger: trigger.discussion({ category: 'Announcements' }), steps: [workflowStep.agent('agent-b')] }),
+        workflow('wf-c', { trigger: trigger.manual(), steps: [workflowStep.agent('agent-c')] }),
+      ]
+      const result = validateWorkflowCollection(specs)
+      expect(result.valid).toBe(true)
+      expect(result.errors).toHaveLength(0)
+    })
+
+    it('errors when two workflows share the same discussion category (no command)', () => {
+      const specs = [
+        workflow('wf-x', { trigger: trigger.discussion({ category: 'Deploy' }), steps: [workflowStep.agent('a')] }),
+        workflow('wf-y', { trigger: trigger.discussion({ category: 'Deploy' }), steps: [workflowStep.agent('b')] }),
+      ]
+      const result = validateWorkflowCollection(specs)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.message.includes('trigger key collision'))).toBe(true)
+      expect(result.errors.some(e => e.message.includes('wf-x') && e.message.includes('wf-y'))).toBe(true)
+    })
+
+    it('does not collide when same category uses different commands', () => {
+      const specs = [
+        workflow('cmd-run', { trigger: { kind: 'discussion' as const, category: 'Orchestrator', command: '/run' }, steps: [workflowStep.agent('a')] }),
+        workflow('cmd-status', { trigger: { kind: 'discussion' as const, category: 'Orchestrator', command: '/status' }, steps: [workflowStep.agent('b')] }),
+      ]
+      const result = validateWorkflowCollection(specs)
+      expect(result.valid).toBe(true)
+    })
   })
 
   it('reports multiple errors in one pass', () => {

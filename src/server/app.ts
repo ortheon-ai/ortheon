@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile, compileAgent, compileWorkflow, flattenTools, formatExpandedPlan, formatAgentPlan, formatWorkflowPlan } from "../compiler.js";
-import { validate, validateAgent, validateWorkflow } from "../validator.js";
+import { validate, validateAgent, validateWorkflow, validateWorkflowCollection } from "../validator.js";
 import { loadSpecFile } from "../loader.js";
 import type {
   AgentSpec,
@@ -681,6 +681,28 @@ export async function startServer(
             `  warning: failed to load "${s.relativePath}": ${s.loadError ?? ""}`,
           ),
         );
+
+      // Cross-spec uniqueness check: duplicate trigger keys cause fan-out runs.
+      const workflowSpecs = suites
+        .filter((s) => s.kind === "workflow" && s.workflowSpec !== null)
+        .map((s) => s.workflowSpec as WorkflowSpec);
+      if (workflowSpecs.length > 0) {
+        const collectionResult = validateWorkflowCollection(workflowSpecs);
+        if (collectionResult.errors.length > 0) {
+          for (const err of collectionResult.errors) {
+            console.error(`  ERROR: ${err.message}`);
+          }
+          server.close();
+          reject(
+            new Error(
+              `Duplicate workflow trigger keys detected — fix spec collisions before starting: ` +
+                collectionResult.errors.map((e) => e.message).join("; "),
+            ),
+          );
+          return;
+        }
+      }
+
       resolve(server);
     };
 
