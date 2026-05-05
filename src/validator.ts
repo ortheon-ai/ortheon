@@ -10,7 +10,6 @@ import type {
   ExpectStep,
   Flow,
   FlowItem,
-  MatchSource,
   MatcherName,
   RefValue,
   ResolvedApiStep,
@@ -20,7 +19,6 @@ import type {
   Toolset,
   UseStep,
   ValidationResult,
-  WorkflowSpec,
 } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -494,7 +492,6 @@ function checkRefsInStep(
 // ---------------------------------------------------------------------------
 
 const KEBAB_RE = /^[a-z0-9][a-z0-9-]*$/
-const VALID_SOURCES = new Set<MatchSource>(['user', 'llm', 'tool', 'any'])
 const VALID_ARG_TYPES = new Set<ArgType>(['string', 'number', 'boolean'])
 
 // ---------------------------------------------------------------------------
@@ -517,46 +514,23 @@ function validateTool(
   if (allIdentifiers.has(t.name)) {
     errors.push({
       severity: 'error',
-      message: `Duplicate command identifier: "${t.name}" (conflicts with another tool name or alias)`,
+      message: `Duplicate tool name: "${t.name}"`,
     })
   } else {
     allIdentifiers.add(t.name)
   }
 
-  for (const alias of t.aliases ?? []) {
-    if (!KEBAB_RE.test(alias)) {
-      errors.push({
-        severity: 'error',
-        message: `tool("${t.name}") alias "${alias}" must be kebab-case`,
-      })
-    }
-    if (allIdentifiers.has(alias)) {
-      errors.push({
-        severity: 'error',
-        message: `Duplicate command identifier: "${alias}" (alias of tool "${t.name}" conflicts with another tool name or alias)`,
-      })
-    } else {
-      allIdentifiers.add(alias)
-    }
-  }
-
-  if (t.source !== undefined && !VALID_SOURCES.has(t.source)) {
-    errors.push({
-      severity: 'error',
-      message: `tool("${t.name}") has invalid source "${t.source}". Valid values: user, llm, tool, any`,
-    })
-  }
-
+  // description is sent to Claude as the tool description, so secret() leaks the value to the LLM.
   if (
-    t.prompt !== undefined &&
-    typeof t.prompt === 'object' &&
-    t.prompt !== null &&
-    '__type' in (t.prompt as object) &&
-    (t.prompt as { __type: string }).__type === 'secret'
+    t.description !== undefined &&
+    typeof t.description === 'object' &&
+    t.description !== null &&
+    '__type' in (t.description as object) &&
+    (t.description as { __type: string }).__type === 'secret'
   ) {
     warnings.push({
       severity: 'warning',
-      message: `tool("${t.name}") prompt uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
+      message: `tool("${t.name}") description uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
     })
   }
 
@@ -628,20 +602,50 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
     })
   }
 
+  // steps must be a non-empty array
+  if (!Array.isArray(spec.steps) || spec.steps.length === 0) {
+    errors.push({
+      severity: 'error',
+      message: 'agent must have at least one step',
+    })
+  } else {
+    const stepNames = new Set<string>()
+    for (let i = 0; i < spec.steps.length; i++) {
+      const s = spec.steps[i]!
+      if (!KEBAB_RE.test(s.name)) {
+        errors.push({
+          severity: 'error',
+          message: `step[${i}] name "${s.name}" must be kebab-case`,
+        })
+      }
+      if (stepNames.has(s.name)) {
+        errors.push({
+          severity: 'error',
+          message: `Duplicate step name: "${s.name}"`,
+        })
+      } else {
+        stepNames.add(s.name)
+      }
+      if (typeof s.prompt === 'string' && !s.prompt.trim()) {
+        errors.push({
+          severity: 'error',
+          message: `step[${i}]("${s.name}") prompt must not be empty`,
+        })
+      }
+    }
+  }
+
   // Build a global identifier registry across all tools and toolsets
   const allIdentifiers = new Set<string>()
 
   for (const entry of spec.tools) {
     if ('__type' in entry && entry.__type === 'toolset') {
-      // Validate toolset name
       if (!KEBAB_RE.test(entry.name)) {
         errors.push({
           severity: 'error',
           message: `toolset name "${entry.name}" must be kebab-case`,
         })
       }
-      // Validate each tool in the toolset (using the shared identifier registry
-      // so cross-toolset duplicates are caught)
       for (const t of entry.tools) {
         validateTool(t, allIdentifiers, errors, warnings)
       }
@@ -655,52 +659,6 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
     errors,
     warnings,
   }
-}
-
-// ---------------------------------------------------------------------------
-// validateWorkflowCollection: cross-spec uniqueness check
-//
-// Workflow trigger keys must be unique across all loaded workflows.
-// A key is the tuple (trigger.kind, category?, command?).
-// Duplicate keys cause the orchestrator to fan-out to multiple runs on a
-// single event, which is almost never intended (§4.4).
-// ---------------------------------------------------------------------------
-
-export function validateWorkflowCollection(specs: WorkflowSpec[]): ValidationResult {
-  const errors: Diagnostic[] = []
-  const warnings: Diagnostic[] = []
-
-  const seen = new Map<string, string>()
-
-  for (const spec of specs) {
-    const { trigger } = spec
-    let key: string
-
-    if (trigger.kind === 'discussion') {
-      const command = 'command' in trigger ? (trigger as { command?: string }).command ?? '' : ''
-      key = `discussion:${trigger.category}:${command}`
-    } else if (trigger.kind === 'cron') {
-      key = `cron:${(trigger as { expr: string }).expr}`
-    } else if (trigger.kind === 'spawn') {
-      key = `spawn:${spec.name}`
-    } else {
-      key = `${trigger.kind}:${spec.name}`
-    }
-
-    const existing = seen.get(key)
-    if (existing !== undefined) {
-      errors.push({
-        severity: 'error',
-        message: `Workflow trigger key collision: "${spec.name}" and "${existing}" share the same trigger key "${key}". ` +
-          `This causes the orchestrator to start multiple runs for a single event. ` +
-          `Ensure each workflow has a unique (trigger.kind, category, command?) combination.`,
-      })
-    } else {
-      seen.set(key, spec.name)
-    }
-  }
-
-  return { valid: errors.length === 0, errors, warnings }
 }
 
 // ---------------------------------------------------------------------------
@@ -723,88 +681,3 @@ export function validate(spec: Spec, plan?: ExecutionPlan): ValidationResult {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Workflow validator
-// ---------------------------------------------------------------------------
-
-// Five-field standard cron expression: min hour dom month dow
-// Each field may be a number, *, or simple range/step (good enough for validation;
-// the orchestrator performs the authoritative parse via croniter).
-const CRON_FIELD_RE = /^(\*|(\d+(-\d+)?(\/\d+)?|\*\/\d+)(,(\d+(-\d+)?(\/\d+)?|\*\/\d+))*)$/
-
-function isValidCronExpr(expr: string): boolean {
-  const fields = expr.trim().split(/\s+/)
-  if (fields.length !== 5) return false
-  return fields.every(f => CRON_FIELD_RE.test(f))
-}
-
-export function validateWorkflow(spec: WorkflowSpec): ValidationResult {
-  const errors: Diagnostic[] = []
-  const warnings: Diagnostic[] = []
-
-  if (spec.steps.length === 0) {
-    errors.push({ severity: 'error', message: 'workflow must have at least one step' })
-  }
-
-  const { trigger } = spec
-  const validTriggerKinds = new Set(['discussion', 'cron', 'manual', 'spawn'])
-
-  if (!validTriggerKinds.has(trigger.kind)) {
-    errors.push({
-      severity: 'error',
-      message: `unknown trigger kind: "${(trigger as { kind: string }).kind}". Valid kinds: ${[...validTriggerKinds].join(', ')}`,
-    })
-  } else {
-    switch (trigger.kind) {
-      case 'discussion':
-        if (!trigger.category || typeof trigger.category !== 'string' || !trigger.category.trim()) {
-          errors.push({ severity: 'error', message: 'trigger.discussion requires a non-empty category' })
-        }
-        break
-      case 'cron':
-        if (!isValidCronExpr(trigger.expr)) {
-          errors.push({
-            severity: 'error',
-            message: `trigger.cron expr "${trigger.expr}" is not a valid 5-field cron expression (min hour dom month dow)`,
-          })
-        }
-        break
-      case 'spawn':
-        if (typeof trigger.maxDepth !== 'number' || !Number.isInteger(trigger.maxDepth) || trigger.maxDepth < 1) {
-          errors.push({ severity: 'error', message: 'trigger.spawn requires maxDepth >= 1' })
-        }
-        break
-      case 'manual':
-        break
-    }
-  }
-
-  for (let i = 0; i < spec.steps.length; i++) {
-    const s = spec.steps[i]!
-    const loc = `step[${i}]`
-
-    if (s.kind !== 'agent') {
-      errors.push({
-        severity: 'error',
-        message: `${loc}: unknown step kind "${(s as { kind: string }).kind}". Currently only "agent" steps are supported`,
-      })
-      continue
-    }
-
-    if (!KEBAB_RE.test(s.specName)) {
-      errors.push({
-        severity: 'error',
-        message: `${loc}: specName "${s.specName}" must be kebab-case (lowercase letters, digits, hyphens; must start with a letter or digit)`,
-      })
-    }
-
-    if (i === 0 && s.approveBefore) {
-      errors.push({
-        severity: 'error',
-        message: `${loc}: approveBefore on the first step is not allowed — there is no upstream agent to gate on`,
-      })
-    }
-  }
-
-  return { valid: errors.length === 0, errors, warnings }
-}

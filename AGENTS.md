@@ -7,9 +7,11 @@ Declarative behavioral spec framework. Two executable primitives: `browser(...)`
 ```
 src/
   types.ts           Type system (all types in one file)
-  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret, bearer, existsCheck, agent, tool, toolset, workflow, trigger, workflowStep
-  compiler.ts        Expand use(), resolve contracts, flatten sections → ExecutionPlan
-  validator.ts       Two-pass validation (structural on AST, ref resolution on expanded plan)
+  types.ts           Type system (all types in one file)
+  dsl.ts             Builder functions: spec, flow, step, browser, api, expect, use, ref, env, secret, bearer, existsCheck, agent, agentStep, tool, toolset
+  compiler.ts        Expand use(), resolve contracts, flatten sections → ExecutionPlan; compileAgent() → AgentPlan with Anthropic-shaped tools + dispatchReference
+  validator.ts       Two-pass validation (structural on AST, ref resolution on expanded plan); validateAgent()
+  agent.ts           Agent helpers: buildAgentPrompt(), parseAgentDispatch()
   runner.ts          Sequential step execution with retry, save, assert; runSpec() + runPlan()
   context.ts         Runtime save/ref store with dot-path resolution
   reporter.ts        Console + JSON output
@@ -41,8 +43,7 @@ tests/               Vitest unit tests (context, assert, compiler, validator, go
 - **[README.md](README.md)** -- Installation, quick start, full DSL reference, CLI reference, auth model, scaling doctrine, recommended file structure.
 - **[docs/architecture.md](docs/architecture.md)** -- Four-layer architecture (authoring, compilation, execution, server), compiler internals (contract resolution, use() expansion, compile-time ref substitution), validator passes, runtime context mechanics, executor details, server layer (trust boundary, plan distribution, execution-plan artifact), key design decisions.
 - **[docs/writing-specs.md](docs/writing-specs.md)** -- Practical authoring guide: contracts, data catalogs, flows, API steps, browser steps, assertions, retries, naming conventions, what not to do.
-- **[docs/agents.md](docs/agents.md)** -- Agent spec full reference: tool config, toolset composition, runAgentStep(), command parsing rules, validation, server integration.
-- **[docs/workflows.md](docs/workflows.md)** -- Workflow spec full reference: trigger builders, workflowStep builders, compileWorkflow(), validateWorkflow(), server integration.
+- **[docs/agents.md](docs/agents.md)** -- Agent spec full reference: step-based dispatch model, tool config, toolset composition, buildAgentPrompt(), parseAgentDispatch(), validation, server integration.
 
 ## Architecture: server vs CLI
 
@@ -81,7 +82,8 @@ Do this on every change, no matter how small. Never skip to implementation witho
 - Inline `expect.body` existence checks use `existsCheck()`, not the string `"exists"`.
 - `save` is uniform: same `{ name: "path" }` shape in both browser and API steps.
 - Reusable flows declare their inputs. `flow(name, { inputs, steps })` -- one shape, no overloads.
-- Reusable tool groups use `toolset(name, tools[])`. Toolsets are flattened to a flat command table at compile time. No `use()` analog -- tools have no compile-time input binding.
+- Reusable tool groups use `toolset(name, tools[])`. Toolsets are flattened to a flat Anthropic-shaped tool array at compile time.
+- Agent tools are reserved for actions that cannot be performed through the agent runner's shell access. Standard `git`/`gh`/`curl` operations are not modeled as tools.
 - `section` is cosmetic grouping only -- not reusable, not independently executable.
 - Contract body shapes are documentation only -- not schema-validated.
 - Verification of DB state, logs, events, etc. happens through HTTP verification endpoints, not DSL extensions.
