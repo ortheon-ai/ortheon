@@ -4,13 +4,13 @@ import { formatDispatchReference } from './compiler.js'
 // ---------------------------------------------------------------------------
 // buildAgentPrompt
 //
-// Constructs the system prompt to pass to cmdland for a given agent step.
+// Constructs the system prompt to pass to the agent runner for a given step.
 // stepName must match an AgentStep.name on the plan; throws if not found.
 //
 // env() and secret() markers in system and step prompt are passed through
-// unresolved. The orchestrator/cmdland is expected to resolve them from the
-// runtime environment before calling this function, or to substitute resolved
-// strings directly.
+// unresolved. The orchestrator is expected to resolve them from the runtime
+// environment before calling this function, or to substitute resolved strings
+// directly.
 // ---------------------------------------------------------------------------
 
 export function buildAgentPrompt(plan: AgentPlan, stepName: string): string {

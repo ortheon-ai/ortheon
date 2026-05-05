@@ -10,7 +10,7 @@ import { agent, agentStep, tool } from '../../../src/dsl.js'
  */
 export default agent('incident-triage', {
   system:
-    'You are an on-call triage bot. cmdland gives you shell access (curl, gh, etc.) ' +
+    'You are an on-call triage bot. You have shell access (curl, gh, etc.) ' +
     'so use those for standard ops work. Only call the tools below for actions that ' +
     'are not reachable via the shell.',
 

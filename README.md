@@ -132,7 +132,7 @@ import { agent, agentStep, tool } from "ortheon";
 
 export default agent("deploy-agent", {
   system:
-    "You are a deployment bot. cmdland gives you shell access (git, gh, etc.) " +
+    "You are a deployment bot. You have shell access (git, gh, etc.) " +
     "so use those for standard developer work. Only call the tools below for " +
     "actions not available via the shell.",
 
@@ -157,7 +157,7 @@ export default agent("deploy-agent", {
 });
 ```
 
-The orchestrator drives the loop: it listens for `/agent name step` lines in GitHub PR or discussion comments, fetches the compiled plan from Ortheon, and dispatches to cmdland:
+The orchestrator drives the loop: it listens for `/agent name step` lines in GitHub PR or discussion comments, fetches the compiled plan from Ortheon, and dispatches to the agent runner:
 
 ```ts
 import { compileAgent, buildAgentPrompt, parseAgentDispatch } from "ortheon";
@@ -168,7 +168,7 @@ const dispatches = parseAgentDispatch(comment.body);
 
 const plan = compileAgent(spec);
 const systemPrompt = buildAgentPrompt(plan, dispatches[0].stepName ?? plan.steps[0].name);
-// pass systemPrompt + plan.tools to cmdland
+// pass systemPrompt + plan.tools to the agent runner
 ```
 
 Compiled tools are Anthropic-shaped (`input_schema`) and ready to pass directly to Claude. `ortheon expand` prints the full agent plan including the dispatch reference.
@@ -577,7 +577,7 @@ Compiled tools are emitted with Anthropic-shaped `input_schema` (ready for Claud
 
 | Function | Description |
 | -------- | ----------- |
-| `buildAgentPrompt(plan, stepName)` | Build the system prompt string for cmdland. Throws if `stepName` not found. |
+| `buildAgentPrompt(plan, stepName)` | Build the system prompt string for the agent runner. Throws if `stepName` not found. |
 | `parseAgentDispatch(text)` | Parse `/agent name step?` lines from a PR or discussion comment body. Skips code fences and blockquotes. |
 
 See [docs/agents.md](docs/agents.md) for the full reference.

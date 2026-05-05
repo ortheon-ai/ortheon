@@ -4,13 +4,13 @@ import { agent, agentStep, tool } from '../../../src/dsl.js'
  * Demo agent spec: release pipeline driven by PR comments.
  *
  * Tools are restricted to operations not available via shell (git, gh, curl).
- * Reading the PR, checking CI, and merging are left to cmdland's shell access.
+ * Reading the PR, checking CI, and merging are done via shell access.
  *
  * ortheon expand examples/specs/demo/deploy-agent.ortheon.ts
  */
 export default agent('deploy-agent', {
   system:
-    'You are a deployment bot. cmdland gives you shell access (git, gh, etc.) ' +
+    'You are a deployment bot. You have shell access (git, gh, etc.) ' +
     'so use those for standard developer work. Only call the tools below for ' +
     'actions that are not available via the shell.',
 

@@ -83,7 +83,7 @@ Do this on every change, no matter how small. Never skip to implementation witho
 - `save` is uniform: same `{ name: "path" }` shape in both browser and API steps.
 - Reusable flows declare their inputs. `flow(name, { inputs, steps })` -- one shape, no overloads.
 - Reusable tool groups use `toolset(name, tools[])`. Toolsets are flattened to a flat Anthropic-shaped tool array at compile time.
-- Agent tools are reserved for actions that cannot be performed through cmdland's shell access. Standard `git`/`gh`/`curl` operations are not modeled as tools.
+- Agent tools are reserved for actions that cannot be performed through the agent runner's shell access. Standard `git`/`gh`/`curl` operations are not modeled as tools.
 - `section` is cosmetic grouping only -- not reusable, not independently executable.
 - Contract body shapes are documentation only -- not schema-validated.
 - Verification of DB state, logs, events, etc. happens through HTTP verification endpoints, not DSL extensions.

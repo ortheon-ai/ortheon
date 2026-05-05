@@ -12,12 +12,12 @@ flowchart TD
   ORCH -- "parseAgentDispatch(body)" --> ORCH
   ORCH -- "GET /api/suites/:id/execution-plan" --> ORTHEON[Ortheon server]
   ORCH -- "buildAgentPrompt(plan, stepName)" --> ORCH
-  ORCH -- "system + history + plan.tools + cmdland params" --> CMD[cmdland]
+  ORCH -- "system + history + plan.tools" --> CMD[agent runner]
   CMD -- "Claude tool calls + reply text" --> ORCH
   ORCH -- "post comment: /agent name next-step" --> GH
 ```
 
-Ortheon's job: author agent specs, compile them to JSON-serializable plans, validate, and serve. The orchestrator owns event watching, history building, and dispatch to cmdland. cmdland owns the Claude loop and tool execution (it provides shell access for standard `git`/`gh`/`curl` operations).
+Ortheon's job: author agent specs, compile them to JSON-serializable plans, validate, and serve. The orchestrator owns event watching, history building, and dispatch to the agent runner. The agent runner owns the Claude loop and tool execution (it provides shell access for standard `git`/`gh`/`curl` operations).
 
 ---
 
@@ -28,7 +28,7 @@ import { agent, agentStep, tool } from 'ortheon'
 
 export default agent('deploy-agent', {
   system:
-    'You are a deployment bot. cmdland gives you shell access (git, gh, etc.) ' +
+    'You are a deployment bot. You have shell access (git, gh, etc.) ' +
     'so use those for standard developer work. Only call the tools below for ' +
     'actions not available via the shell.',
 
@@ -79,7 +79,7 @@ agentStep(name: string, prompt: Resolvable<string>): AgentStep
 
 ### `tool(name, config)`
 
-Creates a `ConversationTool`. Tools are reserved for actions Claude cannot perform through cmdland's general shell access.
+Creates a `ConversationTool`. Tools are reserved for actions Claude cannot perform through the agent runner's general shell access.
 
 ```ts
 tool(name: string, config: {
@@ -140,7 +140,7 @@ The `dispatchReference` lists the agent name, steps in order, and the `/agent` s
 
 ## `buildAgentPrompt(plan, stepName)`
 
-Constructs the system prompt string to send to cmdland for a given agent run.
+Constructs the system prompt string to send to the agent runner for a given agent run.
 
 ```ts
 export function buildAgentPrompt(plan: AgentPlan, stepName: string): string
@@ -239,4 +239,4 @@ The dispatch-by-comment model is simpler: the human posts `/agent name step` in 
 
 **Why are tools restricted to non-shell-synthesizable actions?**
 
-cmdland provides shell access. Claude can use `git`, `gh`, `curl`, and any other standard developer tool through that shell. Defining `read-pr` or `merge-pr` as Ortheon tools would duplicate capabilities Claude already has. Tools in Ortheon are reserved for internal APIs, platform-specific integrations, and other actions that are not reachable via the command line.
+The agent runner provides shell access. Claude can use `git`, `gh`, `curl`, and any other standard developer tool through that shell. Defining `read-pr` or `merge-pr` as Ortheon tools would duplicate capabilities Claude already has. Tools in Ortheon are reserved for internal APIs, platform-specific integrations, and other actions that are not reachable via the command line.
