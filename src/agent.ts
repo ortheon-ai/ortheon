@@ -1,11 +1,12 @@
-import type { AgentPlan } from './types.js'
+import type { AgentPlan, SerializedTool } from './types.js'
 import { formatDispatchReference } from './compiler.js'
 
 // ---------------------------------------------------------------------------
 // buildAgentPrompt
 //
-// Constructs the system prompt to pass to the agent runner for a given step.
-// stepName must match an AgentStep.name on the plan; throws if not found.
+// Constructs the system prompt and tool list to pass to the agent runner for
+// a given step. stepName must match an AgentStep.name on the plan; throws if
+// not found.
 //
 // env() and secret() markers in system and step prompt are passed through
 // unresolved. The orchestrator is expected to resolve them from the runtime
@@ -13,7 +14,12 @@ import { formatDispatchReference } from './compiler.js'
 // directly.
 // ---------------------------------------------------------------------------
 
-export function buildAgentPrompt(plan: AgentPlan, stepName: string): string {
+export type AgentPromptPayload = {
+  prompt: string
+  tools: SerializedTool[]
+}
+
+export function buildAgentPrompt(plan: AgentPlan, stepName: string): AgentPromptPayload {
   const idx = plan.steps.findIndex(s => s.name === stepName)
   if (idx === -1) {
     throw new Error(
@@ -36,7 +42,7 @@ export function buildAgentPrompt(plan: AgentPlan, stepName: string): string {
 
   const dispatchRef = formatDispatchReference(plan.specName, plan.steps, stepName)
 
-  return [
+  const prompt = [
     systemStr,
     '',
     `Step "${stepName}" (${position} of ${total}):`,
@@ -44,6 +50,8 @@ export function buildAgentPrompt(plan: AgentPlan, stepName: string): string {
     '',
     dispatchRef,
   ].join('\n')
+
+  return { prompt, tools: plan.tools }
 }
 
 // ---------------------------------------------------------------------------

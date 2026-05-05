@@ -167,8 +167,8 @@ const dispatches = parseAgentDispatch(comment.body);
 // dispatches[0] → { agentName: 'deploy-agent', stepName: 'plan', raw: '...' }
 
 const plan = compileAgent(spec);
-const systemPrompt = buildAgentPrompt(plan, dispatches[0].stepName ?? plan.steps[0].name);
-// pass systemPrompt + plan.tools to the agent runner
+const { prompt, tools } = buildAgentPrompt(plan, dispatches[0].stepName ?? plan.steps[0].name);
+// pass prompt + tools to the agent runner
 ```
 
 Compiled tools are Anthropic-shaped (`input_schema`) and ready to pass directly to Claude. `ortheon expand` prints the full agent plan including the dispatch reference.
@@ -577,7 +577,7 @@ Compiled tools are emitted with Anthropic-shaped `input_schema` (ready for Claud
 
 | Function | Description |
 | -------- | ----------- |
-| `buildAgentPrompt(plan, stepName)` | Build the system prompt string for the agent runner. Throws if `stepName` not found. |
+| `buildAgentPrompt(plan, stepName)` | Returns `{ prompt, tools }` — the step-aware system prompt string and the Anthropic-shaped tool list. Throws if `stepName` not found. |
 | `parseAgentDispatch(text)` | Parse `/agent name step?` lines from a PR or discussion comment body. Skips code fences and blockquotes. |
 
 See [docs/agents.md](docs/agents.md) for the full reference.

@@ -12,7 +12,7 @@ flowchart TD
   ORCH -- "parseAgentDispatch(body)" --> ORCH
   ORCH -- "GET /api/suites/:id/execution-plan" --> ORTHEON[Ortheon server]
   ORCH -- "buildAgentPrompt(plan, stepName)" --> ORCH
-  ORCH -- "system + history + plan.tools" --> CMD[agent runner]
+  ORCH -- "system + history + tools" --> CMD[agent runner]
   CMD -- "Claude tool calls + reply text" --> ORCH
   ORCH -- "post comment: /agent name next-step" --> GH
 ```
@@ -140,15 +140,20 @@ The `dispatchReference` lists the agent name, steps in order, and the `/agent` s
 
 ## `buildAgentPrompt(plan, stepName)`
 
-Constructs the system prompt string to send to the agent runner for a given agent run.
+Constructs the system prompt and Anthropic-shaped tool list to send to the agent runner for a given agent run.
 
 ```ts
-export function buildAgentPrompt(plan: AgentPlan, stepName: string): string
+export type AgentPromptPayload = {
+  prompt: string          // system + step header + dispatch reference
+  tools: SerializedTool[] // Anthropic-shaped tool definitions from plan.tools
+}
+
+export function buildAgentPrompt(plan: AgentPlan, stepName: string): AgentPromptPayload
 ```
 
 Throws if `stepName` is not found among `plan.steps`.
 
-Output format:
+`prompt` format:
 
 ```
 <system prompt>
@@ -160,6 +165,8 @@ Step "<stepName>" (<position> of <total>):
 ```
 
 The dispatch reference section instructs the LLM how to stay on the current step or advance, and warns it not to post any `/agent` line on the final step.
+
+`tools` is `plan.tools` verbatim — the Anthropic `input_schema` objects produced by `compileAgent()`. Pass both `prompt` and `tools` to the agent runner in a single call.
 
 ---
 
