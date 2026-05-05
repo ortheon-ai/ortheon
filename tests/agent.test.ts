@@ -440,6 +440,35 @@ describe('validateAgent()', () => {
     expect(result.valid).toBe(false)
     expect(result.errors.some(e => e.message.includes('kebab-case'))).toBe(true)
   })
+
+  it('warns on secret() in tool description', () => {
+    const s = agent('bot', {
+      system: 'hi',
+      steps: [agentStep('go', 'go')],
+      tools: [tool('leaky', { description: secret('TOOL_DESC') })],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(true)
+    expect(
+      result.warnings.some(
+        w => w.message.includes('tool("leaky") description uses secret()') && w.message.includes('leakage risk'),
+      ),
+    ).toBe(true)
+  })
+
+  it('warns on secret() in a tool description nested inside a toolset', () => {
+    const ts = toolset('ops', [tool('leaky', { description: secret('TOOL_DESC') })])
+    const s = agent('bot', {
+      system: 'hi',
+      steps: [agentStep('go', 'go')],
+      tools: [ts],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(true)
+    expect(
+      result.warnings.some(w => w.message.includes('tool("leaky") description uses secret()')),
+    ).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -460,6 +489,15 @@ describe('validateToolset()', () => {
   it('errors on duplicate tool names within a toolset', () => {
     const ts = toolset('dupe', [tool('same', {}), tool('same', {})])
     expect(validateToolset(ts).valid).toBe(false)
+  })
+
+  it('warns on secret() in a tool description', () => {
+    const ts = toolset('leaks', [tool('leaky', { description: secret('TOOL_DESC') })])
+    const result = validateToolset(ts)
+    expect(result.valid).toBe(true)
+    expect(
+      result.warnings.some(w => w.message.includes('tool("leaky") description uses secret()')),
+    ).toBe(true)
   })
 })
 

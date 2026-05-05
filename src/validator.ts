@@ -502,6 +502,7 @@ function validateTool(
   t: ConversationTool,
   allIdentifiers: Set<string>,
   errors: Diagnostic[],
+  warnings: Diagnostic[],
 ): void {
   if (!KEBAB_RE.test(t.name)) {
     errors.push({
@@ -517,6 +518,20 @@ function validateTool(
     })
   } else {
     allIdentifiers.add(t.name)
+  }
+
+  // description is sent to Claude as the tool description, so secret() leaks the value to the LLM.
+  if (
+    t.description !== undefined &&
+    typeof t.description === 'object' &&
+    t.description !== null &&
+    '__type' in (t.description as object) &&
+    (t.description as { __type: string }).__type === 'secret'
+  ) {
+    warnings.push({
+      severity: 'warning',
+      message: `tool("${t.name}") description uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
+    })
   }
 
   if (t.args) {
@@ -554,7 +569,7 @@ export function validateToolset(ts: Toolset): ValidationResult {
 
   const allIdentifiers = new Set<string>()
   for (const t of ts.tools) {
-    validateTool(t, allIdentifiers, errors)
+    validateTool(t, allIdentifiers, errors, warnings)
   }
 
   return { valid: errors.length === 0, errors, warnings }
@@ -632,10 +647,10 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
         })
       }
       for (const t of entry.tools) {
-        validateTool(t, allIdentifiers, errors)
+        validateTool(t, allIdentifiers, errors, warnings)
       }
     } else {
-      validateTool(entry as ConversationTool, allIdentifiers, errors)
+      validateTool(entry as ConversationTool, allIdentifiers, errors, warnings)
     }
   }
 
