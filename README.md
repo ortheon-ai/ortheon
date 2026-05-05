@@ -123,77 +123,57 @@ This makes specs suitable as **behavioral contracts** when modifying or rewritin
 
 ## Agent specs
 
-In addition to behavioral specs, Ortheon supports **agent specs** — declarative command contracts for LLM-driven agents.
+In addition to behavioral specs, Ortheon supports **agent specs** — declarative contracts for orchestrator-driven LLM agents.
 
-Where a behavioral spec describes what must be true about a running system, an agent spec describes what commands an LLM agent may emit and how those commands should be parsed. The primary artifact is a command table that an agent runtime uses to deterministically dispatch tool calls.
+An agent spec defines the **steps** an agent progresses through and the **tools** it can call. Steps replace separate workflow specs and approval gate primitives: a step prompt can tell the LLM (or user) to post `/agent name step-name` to advance.
 
 ```ts
-import { agent, tool, env } from "ortheon";
+import { agent, agentStep, tool } from "ortheon";
 
-export default agent("bug-reports", {
-  system: "You are a triage bot. Analyze incoming reports and take action.",
+export default agent("deploy-agent", {
+  system:
+    "You are a deployment bot. cmdland gives you shell access (git, gh, etc.) " +
+    "so use those for standard developer work. Only call the tools below for " +
+    "actions not available via the shell.",
+
+  steps: [
+    agentStep("plan",
+      "Read the PR with `gh pr view` and draft release notes. " +
+      "When ready, post '/agent deploy-agent review' to advance."),
+    agentStep("review",
+      "Post the notes for review. Ask the user to post " +
+      "'/agent deploy-agent ship' once they approve."),
+    agentStep("ship",
+      "Call trigger-deploy for production. " +
+      "Do not post any /agent line when done; the run is complete."),
+  ],
 
   tools: [
-    tool("create-issue", {
-      source: "llm",
-      args: {
-        title: { type: "string", required: true },
-        priority: { type: "string" },
-      },
-      prompt: "Create a GitHub issue with the title and priority provided.",
-    }),
-    tool("lookup-docs", {
-      aliases: ["docs"],
-      source: "any",
-      args: { query: { type: "string", required: true } },
+    tool("trigger-deploy", {
+      description: "Trigger an internal deployment pipeline. Not available via gh/git.",
+      args: { env: { type: "string", required: true } },
     }),
   ],
 });
 ```
 
-The system prompt describes the role. The command table is auto-generated as `plan.commandReference` during compilation — no need to duplicate tool definitions in the prompt:
+The orchestrator drives the loop: it listens for `/agent name step` lines in GitHub PR or discussion comments, fetches the compiled plan from Ortheon, and dispatches to cmdland:
 
 ```ts
-import { compileAgent, runAgentStep } from "ortheon";
+import { compileAgent, buildAgentPrompt, parseAgentDispatch } from "ortheon";
+
+// On a new PR comment:
+const dispatches = parseAgentDispatch(comment.body);
+// dispatches[0] → { agentName: 'deploy-agent', stepName: 'plan', raw: '...' }
 
 const plan = compileAgent(spec);
-const systemPrompt = plan.system + "\n\n" + plan.commandReference;
-// pass systemPrompt to your LLM client
-
-const result = runAgentStep(plan, { text: llmReply, source: "llm" });
-// result.candidates[0].name  → "create-issue"
-// result.candidates[0].args  → { title: "...", priority: "high" }
-// result.candidates[0].prompt → "Create a GitHub issue..."
+const systemPrompt = buildAgentPrompt(plan, dispatches[0].stepName ?? plan.steps[0].name);
+// pass systemPrompt + plan.tools to cmdland
 ```
 
-`runAgentStep()` handles one message at a time. The caller owns the LLM client, conversation history, tool execution, and loop control. `ortheon expand` prints the command table for an agent file.
+Compiled tools are Anthropic-shaped (`input_schema`) and ready to pass directly to Claude. `ortheon expand` prints the full agent plan including the dispatch reference.
 
 See [docs/agents.md](docs/agents.md) for the full reference.
-
-## Workflow specs
-
-Ortheon also supports **workflow specs** — declarative pipelines that chain agent specs together, triggered by a GitHub Discussion, a cron schedule, a manual dispatch, or a spawn from another agent.
-
-Where an agent spec describes what a single LLM-driven agent may do, a workflow spec describes the sequence of agents that should run and where human approval gates are required between them.
-
-```ts
-import { workflow, trigger, workflowStep } from "ortheon";
-
-export default workflow("feature-pipeline", {
-  trigger: trigger.discussion({ category: "releases", command: "/ship" }),
-  steps: [
-    workflowStep.agent("plan-agent"),
-    workflowStep.agent("review-agent",  { approveBefore: true }),
-    workflowStep.agent("deploy-agent",  { approveBefore: true, approveAfter: true }),
-  ],
-});
-```
-
-Workflow specs are **declarative metadata only**. Ortheon compiles and serves them but never executes them. Execution is the responsibility of the orchestrator service (schedules runs, responds to triggers) and cmdland (drives the agent loop and parks on approval gates).
-
-`ortheon expand` prints the compiled plan. `ortheon serve` exposes workflow plans through the same API routes as behavioral and agent plans.
-
-See [docs/workflows.md](docs/workflows.md) for the full reference.
 
 ## Installation
 
@@ -572,39 +552,35 @@ Five only. No matcher jungle.
 | Function | Purpose |
 | -------- | ------- |
 | `agent(name, config)` | Top-level agent spec |
-| `tool(name, config)` | Command declaration |
-| `toolset(name, tools)` | Named, shareable group of tools that can be composed into one or more agent specs |
-
-### Workflow spec primitives
-
-| Function | Purpose |
-| -------- | ------- |
-| `workflow(name, config)` | Top-level workflow spec |
-| `trigger.discussion({ category, command? })` | Fire when a GitHub Discussion is opened in the given category |
-| `trigger.cron(expr)` | Fire on a 5-field cron schedule (`min hour dom month dow`) |
-| `trigger.manual()` | Fire only when explicitly dispatched |
-| `trigger.spawn({ maxDepth })` | Fire when another agent spawns this workflow |
-| `workflowStep.agent(specName, config?)` | Declare a step that runs the named agent spec, with optional `approveBefore` / `approveAfter` gates |
+| `agentStep(name, prompt)` | Named step with a prompt for the LLM |
+| `tool(name, config)` | Tool declaration (Anthropic-shaped; reserved for non-shell actions) |
+| `toolset(name, tools)` | Named, shareable group of tools |
 
 **`agent()` config:**
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `system` | `string \| EnvValue` | LLM system prompt. Use `env()` for externalized prompts; avoid `secret()`. |
-| `tools` | `ConversationTool[]` | Declared commands. |
+| `system` | `Resolvable<string>` | LLM system prompt. Use `env()` for externalized prompts; avoid `secret()`. |
+| `steps` | `AgentStep[]` | Required. At least one named step. Each step has a `name` (kebab-case) and `prompt`. |
+| `tools` | `Array<ConversationTool \| Toolset>` | Tools reserved for non-shell-synthesizable actions. |
 
 **`tool()` config** (all fields optional):
 
-| Field | Type | Default | Description |
-| ----- | ---- | ------- | ----------- |
-| `source` | `'llm' \| 'user' \| 'tool' \| 'any'` | `'llm'` | Which message source may emit this command. `'llm'` prevents accidental user `/command` triggers. |
-| `aliases` | `string[]` | — | Alternate command names. All names and aliases must be globally unique and kebab-case. |
-| `args` | `ArgSpec` | — | Argument schema: `Record<string, { type: 'string' \| 'number' \| 'boolean'; required?: boolean }>`. |
-| `prompt` | `Resolvable<string>` | — | Returned in `ToolCallResult.prompt` when the command is dispatched. The caller injects it into the conversation. |
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `description` | `Resolvable<string>` | Passed to Claude as the tool description. |
+| `args` | `ArgSpec` | `Record<string, { type: 'string' \| 'number' \| 'boolean'; required?: boolean; description?: string }>`. |
 
-**`runAgentStep(plan, message)`** parses `/command key="value"` lines, resolves aliases, validates args, and returns ordered candidates. Commands inside code fences and blockquotes are ignored. Lines with malformed args (unquoted values, mid-sentence placement) are silently dropped. Schema violations (missing required arg, wrong type) produce a candidate with `validation.valid = false`.
+Compiled tools are emitted with Anthropic-shaped `input_schema` (ready for Claude's native tool calling). To share tools across multiple agent specs, group them with `toolset(name, tools)` — the compiler flattens toolsets and the validator catches name conflicts globally.
 
-To share tools across multiple agent specs, group them with `toolset(name, tools)` and drop the toolset into each agent's `tools` array — the compiler flattens toolsets and the validator catches name conflicts globally. See [docs/agents.md](docs/agents.md) for details.
+**Agent helpers:**
+
+| Function | Description |
+| -------- | ----------- |
+| `buildAgentPrompt(plan, stepName)` | Build the system prompt string for cmdland. Throws if `stepName` not found. |
+| `parseAgentDispatch(text)` | Parse `/agent name step?` lines from a PR or discussion comment body. Skips code fences and blockquotes. |
+
+See [docs/agents.md](docs/agents.md) for the full reference.
 
 ### API step options
 
@@ -825,12 +801,9 @@ ortheon/
   specs/            # Behavioral scenario specs
     smoke/health.ortheon.ts
     checkout/authenticated-checkout.ortheon.ts
-  agents/           # Agent specs
-    bug-reports.ortheon.ts
-    support-triage.ortheon.ts
-  workflows/        # Workflow specs (trigger + agent pipeline)
-    feature-pipeline.ortheon.ts
-    nightly-report.ortheon.ts
+  agents/           # Agent specs (step-based, orchestrator-driven)
+    deploy-agent.ortheon.ts
+    incident-triage.ortheon.ts
   environments/     # Environment configs (optional)
     staging.ts
 ```

@@ -1,8 +1,11 @@
 import type {
   AgentPlan,
   AgentSpec,
+  AgentStep,
   ApiContract,
   ApiStep,
+  ArgField,
+  ArgType,
   BrowserStep,
   ConversationTool,
   ExecutableStep,
@@ -11,7 +14,6 @@ import type {
   Flow,
   FlowItem,
   FlowRange,
-  GateDescriptor,
   InlineExpect,
   Resolvable,
   Section,
@@ -20,9 +22,6 @@ import type {
   Step,
   Toolset,
   UseStep,
-  WorkflowPlan,
-  WorkflowSpec,
-  WorkflowStep,
 } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -370,8 +369,8 @@ export function formatExpandedPlan(plan: ExecutionPlan): string {
 // Agent compiler
 //
 // Transforms an AgentSpec into an AgentPlan:
-//   - Defaults source to 'llm' when not specified
-//   - Passes aliases, args, prompt, and system through unchanged
+//   - Flattens toolsets into a flat SerializedTool[] with Anthropic input_schema
+//   - Generates dispatchReference from spec.name and steps
 // ---------------------------------------------------------------------------
 
 export function flattenTools(entries: AgentSpec['tools']): ConversationTool[] {
@@ -386,67 +385,84 @@ export function flattenTools(entries: AgentSpec['tools']): ConversationTool[] {
   return result
 }
 
+function buildInputSchema(args: Record<string, ArgField> | undefined): SerializedTool['input_schema'] {
+  const argSpec = args
+  if (!argSpec || Object.keys(argSpec).length === 0) {
+    return { type: 'object', properties: {}, required: [] }
+  }
+  const properties: Record<string, { type: ArgType; description?: string }> = {}
+  const required: string[] = []
+  for (const [fieldName, field] of Object.entries(argSpec)) {
+    const prop: { type: ArgType; description?: string } = { type: field.type }
+    if (field.description) prop.description = field.description
+    properties[fieldName] = prop
+    if (field.required) required.push(fieldName)
+  }
+  return { type: 'object', properties, required }
+}
+
+export function formatDispatchReference(specName: string, steps: AgentStep[], activeStepName?: string): string {
+  if (steps.length === 0) return ''
+
+  const lines: string[] = []
+  lines.push(`You are running as agent "${specName}".`)
+  lines.push('')
+  lines.push(`This agent has ${steps.length} step${steps.length === 1 ? '' : 's'} (in order):`)
+
+  for (const s of steps) {
+    const marker = s.name === activeStepName ? '  (current)' : ''
+    lines.push(`  - ${s.name}${marker}`)
+  }
+
+  if (activeStepName !== undefined) {
+    const idx = steps.findIndex(s => s.name === activeStepName)
+    const nextStep = idx >= 0 && idx + 1 < steps.length ? steps[idx + 1] : null
+    const isLast = nextStep === null
+
+    lines.push('')
+    lines.push('To keep working on the current step, post a comment containing exactly:')
+    lines.push(`/agent ${specName} ${activeStepName}`)
+
+    if (!isLast && nextStep) {
+      lines.push('')
+      lines.push('To advance to the next step, post:')
+      lines.push(`/agent ${specName} ${nextStep.name}`)
+    }
+
+    lines.push('')
+    lines.push('A human user can post either line to approve progression.')
+    lines.push('The line must be at the start of a comment line and not inside a code fence or blockquote.')
+
+    if (isLast) {
+      lines.push(`On this final step ("${activeStepName}"), do not post any /agent line when finished.`)
+    }
+  } else {
+    lines.push('')
+    lines.push('Dispatch syntax:')
+    lines.push(`/agent ${specName} <step-name>`)
+  }
+
+  return lines.join('\n')
+}
+
 export function compileAgent(spec: AgentSpec): AgentPlan {
   const tools: SerializedTool[] = flattenTools(spec.tools).map(t => ({
     name: t.name,
-    ...(t.aliases !== undefined ? { aliases: t.aliases } : {}),
-    source: t.source ?? 'llm',
-    ...(t.args !== undefined ? { args: t.args } : {}),
-    ...(t.prompt !== undefined ? { prompt: t.prompt } : {}),
-    ...(t.requires_approval === true ? { requires_approval: true } : {}),
+    ...(t.description !== undefined ? { description: t.description } : {}),
+    input_schema: buildInputSchema(t.args),
   }))
 
   return {
     specName: spec.name,
     system: spec.system,
+    steps: spec.steps,
     tools,
-    commandReference: formatCommandReference(tools),
+    dispatchReference: formatDispatchReference(spec.name, spec.steps),
   }
 }
 
 // ---------------------------------------------------------------------------
-// Command reference formatter
-//
-// Generates an LLM-ready block describing available commands. Intended to be
-// appended to the system prompt so the LLM does not need to duplicate the
-// command table in the spec's `system` field.
-// ---------------------------------------------------------------------------
-
-export function formatCommandReference(tools: SerializedTool[]): string {
-  if (tools.length === 0) return ''
-
-  const lines: string[] = [
-    'Commands are available by writing /command key="value" on its own line.',
-    '',
-    'Available commands:',
-  ]
-
-  for (const t of tools) {
-    let cmdLine = `  /${t.name}`
-    if (t.args && Object.keys(t.args).length > 0) {
-      const argParts = Object.entries(t.args).map(([k, f]) => {
-        const req = f.required ? ', required' : ''
-        return `${k}="<${f.type}${req}>"`
-      })
-      cmdLine += ' ' + argParts.join(' ')
-    }
-    if (t.aliases && t.aliases.length > 0) {
-      cmdLine += `  (aliases: ${t.aliases.join(', ')})`
-    }
-    lines.push(cmdLine)
-  }
-
-  lines.push('')
-  lines.push('Rules:')
-  lines.push('- One command per line, at the start of the line')
-  lines.push('- Always quote argument values: key="value"')
-  lines.push('- Do not place commands inside code blocks or block quotes')
-
-  return lines.join('\n')
-}
-
-// ---------------------------------------------------------------------------
-// Agent plan formatter
+// Agent plan formatter (for ortheon expand)
 // ---------------------------------------------------------------------------
 
 function formatResolvable(value: Resolvable<string>): string {
@@ -462,57 +478,7 @@ function formatResolvable(value: Resolvable<string>): string {
   }
 }
 
-export function formatAgentPlan(plan: AgentPlan): string {
-  const lines: string[] = []
-
-  lines.push(`Agent: ${plan.specName}`)
-  lines.push(`System prompt: ${formatResolvable(plan.system)}`)
-  lines.push('')
-
-  if (plan.tools.length === 0) {
-    lines.push('  (no commands defined)')
-    return lines.join('\n')
-  }
-
-  lines.push('  Arg syntax: /command key="value" ...')
-  lines.push('')
-
-  for (const t of plan.tools) {
-    formatSerializedTool(t, lines)
-  }
-
-  return lines.join('\n').trimEnd()
-}
-
-function formatSerializedTool(t: SerializedTool, lines: string[]): void {
-  const aliasesSuffix = t.aliases && t.aliases.length > 0 ? `   aliases: ${t.aliases.join(', ')}` : ''
-  const approvalSuffix = t.requires_approval ? '   requires_approval: true' : ''
-  lines.push(`  command: ${t.name}   source: ${t.source}${aliasesSuffix}${approvalSuffix}`)
-
-  if (t.args && Object.keys(t.args).length > 0) {
-    const argParts = Object.entries(t.args).map(([k, f]) => {
-      const req = f.required ? ', required' : ''
-      return `${k} (${f.type}${req})`
-    })
-    lines.push(`    args: ${argParts.join(', ')}`)
-  }
-
-  if (t.prompt !== undefined) {
-    const promptStr = typeof t.prompt === 'string'
-      ? t.prompt.trim()
-      : formatResolvable(t.prompt)
-    lines.push(`    prompt: ${promptStr}`)
-  }
-
-  lines.push('')
-}
-
-function formatToolEntry(t: ConversationTool, lines: string[]): void {
-  formatSerializedTool({ ...t, source: t.source ?? 'llm' }, lines)
-}
-
-// Renders an AgentSpec with toolset groupings visible. Used by ortheon expand
-// so provenance is shown even though the compiled AgentPlan is flat.
+// Renders an AgentSpec with toolset groupings visible. Used by ortheon expand.
 export function formatAgentSpec(spec: AgentSpec): string {
   const lines: string[] = []
 
@@ -520,28 +486,64 @@ export function formatAgentSpec(spec: AgentSpec): string {
   lines.push(`System prompt: ${formatResolvable(spec.system)}`)
   lines.push('')
 
-  const allEntries = spec.tools
-  if (allEntries.length === 0) {
-    lines.push('  (no commands defined)')
-    return lines.join('\n')
-  }
-
-  lines.push('  Arg syntax: /command key="value" ...')
-  lines.push('')
-
-  for (const entry of allEntries) {
-    if ('__type' in entry && (entry as Toolset).__type === 'toolset') {
-      const ts = entry as Toolset
-      lines.push(`  [toolset: ${ts.name}]`)
-      for (const t of ts.tools) {
-        formatToolEntry(t, lines)
-      }
-    } else {
-      formatToolEntry(entry as ConversationTool, lines)
+  // Steps
+  if (spec.steps.length === 0) {
+    lines.push('  Steps: (none)')
+  } else {
+    lines.push(`  Steps (${spec.steps.length}):`)
+    for (let i = 0; i < spec.steps.length; i++) {
+      const s = spec.steps[i]!
+      const promptStr = typeof s.prompt === 'string'
+        ? s.prompt.slice(0, 80) + (s.prompt.length > 80 ? '...' : '')
+        : formatResolvable(s.prompt)
+      lines.push(`    ${i + 1}. ${s.name}`)
+      lines.push(`       prompt: ${promptStr}`)
     }
   }
 
+  lines.push('')
+
+  // Tools
+  if (spec.tools.length === 0) {
+    lines.push('  Tools: (none)')
+  } else {
+    lines.push('  Tools:')
+    for (const entry of spec.tools) {
+      if ('__type' in entry && (entry as Toolset).__type === 'toolset') {
+        const ts = entry as Toolset
+        lines.push(`    [toolset: ${ts.name}]`)
+        for (const t of ts.tools) {
+          formatSpecToolEntry(t, lines, '    ')
+        }
+      } else {
+        formatSpecToolEntry(entry as ConversationTool, lines, '    ')
+      }
+    }
+  }
+
+  lines.push('')
+  lines.push('  Dispatch reference:')
+  const dispatchRef = formatDispatchReference(spec.name, spec.steps)
+  for (const line of dispatchRef.split('\n')) {
+    lines.push(`    ${line}`)
+  }
+
   return lines.join('\n').trimEnd()
+}
+
+function formatSpecToolEntry(t: ConversationTool, lines: string[], indent: string): void {
+  const descStr = t.description
+    ? (typeof t.description === 'string' ? t.description : formatResolvable(t.description))
+    : '(no description)'
+  lines.push(`${indent}tool: ${t.name}   ${descStr}`)
+
+  if (t.args && Object.keys(t.args).length > 0) {
+    const argParts = Object.entries(t.args).map(([k, f]) => {
+      const req = f.required ? ', required' : ''
+      return `${k} (${f.type}${req})`
+    })
+    lines.push(`${indent}  args: ${argParts.join(', ')}`)
+  }
 }
 
 function formatAction(action: ExecutableStep['action']): string {
@@ -561,95 +563,3 @@ function formatAction(action: ExecutableStep['action']): string {
   return 'unknown'
 }
 
-// ---------------------------------------------------------------------------
-// Workflow compiler
-// ---------------------------------------------------------------------------
-
-export function compileWorkflow(spec: WorkflowSpec): WorkflowPlan {
-  const gates: GateDescriptor[] = []
-
-  for (let i = 0; i < spec.steps.length; i++) {
-    const s = spec.steps[i]!
-    if (s.approveBefore) gates.push({ stepIndex: i, position: 'before' })
-    if (s.approveAfter) gates.push({ stepIndex: i, position: 'after' })
-  }
-
-  return {
-    specName: spec.name,
-    trigger: spec.trigger,
-    steps: spec.steps,
-    gates,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Workflow formatters
-// ---------------------------------------------------------------------------
-
-function formatTrigger(trigger: WorkflowSpec['trigger']): string {
-  switch (trigger.kind) {
-    case 'discussion': {
-      const cmd = trigger.command ? `, command: "${trigger.command}"` : ''
-      return `discussion(category: "${trigger.category}"${cmd})`
-    }
-    case 'cron':
-      return `cron("${trigger.expr}")`
-    case 'manual':
-      return `manual()`
-    case 'spawn':
-      return `spawn(maxDepth: ${trigger.maxDepth})`
-  }
-}
-
-function formatWorkflowStepLine(s: WorkflowStep, index: number, lines: string[]): void {
-  const gates: string[] = []
-  if (s.approveBefore) gates.push('approveBefore')
-  if (s.approveAfter) gates.push('approveAfter')
-  const gateSuffix = gates.length > 0 ? `   [${gates.join(', ')}]` : ''
-  lines.push(`  ${String(index + 1).padStart(3, ' ')}. agent: ${s.specName}${gateSuffix}`)
-}
-
-export function formatWorkflowSpec(spec: WorkflowSpec): string {
-  const lines: string[] = []
-  lines.push(`Workflow: ${spec.name}`)
-  lines.push(`Trigger:  ${formatTrigger(spec.trigger)}`)
-  lines.push('')
-
-  if (spec.steps.length === 0) {
-    lines.push('  (no steps defined)')
-    return lines.join('\n')
-  }
-
-  lines.push(`Steps (${spec.steps.length}):`)
-  for (let i = 0; i < spec.steps.length; i++) {
-    formatWorkflowStepLine(spec.steps[i]!, i, lines)
-  }
-
-  return lines.join('\n')
-}
-
-export function formatWorkflowPlan(plan: WorkflowPlan): string {
-  const lines: string[] = []
-  lines.push(`Workflow: ${plan.specName}`)
-  lines.push(`Trigger:  ${formatTrigger(plan.trigger)}`)
-  lines.push('')
-
-  if (plan.steps.length === 0) {
-    lines.push('  (no steps defined)')
-  } else {
-    lines.push(`Steps (${plan.steps.length}):`)
-    for (let i = 0; i < plan.steps.length; i++) {
-      formatWorkflowStepLine(plan.steps[i]!, i, lines)
-    }
-  }
-
-  if (plan.gates.length > 0) {
-    lines.push('')
-    lines.push(`Gates (${plan.gates.length}):`)
-    for (const g of plan.gates) {
-      lines.push(`    step ${g.stepIndex + 1} ${g.position}`)
-    }
-  }
-
-  return lines.join('\n')
-}

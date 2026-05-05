@@ -274,26 +274,19 @@ export type ValidationResult = {
 // Agent spec types
 // ---------------------------------------------------------------------------
 
-// RuntimeMessageSource: the source of a message at runtime (never 'any')
-export type RuntimeMessageSource = 'user' | 'llm' | 'tool'
-// MatchSource: the source field in a tool command source ('any' is an authoring convenience)
-export type MatchSource = RuntimeMessageSource | 'any'
-
-// Arg schema for declarative command argument validation
+// Arg schema for tool input validation and Anthropic input_schema generation
 export type ArgType = 'string' | 'number' | 'boolean'
 export type ArgField = {
   type: ArgType
   required?: boolean
+  description?: string
 }
 export type ArgSpec = Record<string, ArgField>
 
 export type ConversationTool = {
-  name: string            // kebab-case command name
-  aliases?: string[]      // optional alternate command names (kebab-case)
-  source?: MatchSource    // which message source may emit this command; defaults to 'llm'
+  name: string                      // kebab-case tool name
+  description?: Resolvable<string>  // passed to the LLM as tool description
   args?: ArgSpec
-  prompt?: Resolvable<string>  // injected instruction returned to the caller on dispatch
-  requires_approval?: boolean  // if true, the agent runtime must pause for external approval before executing
 }
 
 // Named group of tools for sharing across agents.
@@ -305,60 +298,46 @@ export type Toolset = {
   tools: ConversationTool[]
 }
 
+// A single named step in an agent's progression.
+export type AgentStep = {
+  name: string               // kebab-case; used in /agent [agent-name] [step-name] dispatch
+  prompt: Resolvable<string> // injected as the step-level instruction in buildAgentPrompt()
+}
+
 export type AgentSpec = {
   __type: 'agent'
   name: string
   // env() is allowed; secret() is structurally valid but triggers a validator warning
   system: Resolvable<string>
+  steps: AgentStep[]                 // ordered list of named steps; at least one required
   tools: Array<ConversationTool | Toolset>
 }
 
 // ---------------------------------------------------------------------------
-// Agent compiled plan types (JSON-serializable)
+// Agent compiled plan types (JSON-serializable, Anthropic-shaped)
 // ---------------------------------------------------------------------------
 
+// Anthropic-shaped tool definition emitted by the compiler.
+// The input_schema is built from the tool's ArgSpec.
 export type SerializedTool = {
   name: string
-  aliases?: string[]
-  source: MatchSource     // always explicit in plan (defaulted from 'llm' during compile)
-  args?: ArgSpec
-  prompt?: Resolvable<string>
-  requires_approval?: boolean  // propagated from ConversationTool during compile; omitted when false/unset
+  description?: Resolvable<string>
+  input_schema: {
+    type: 'object'
+    properties: Record<string, { type: ArgType; description?: string }>
+    required: string[]
+  }
 }
 
 export type AgentPlan = {
   specName: string
   // env() markers preserved unresolved; secret() triggers a validator warning
   system: Resolvable<string>
+  steps: AgentStep[]
   tools: SerializedTool[]
-  // LLM-ready command reference generated from the tools array.
-  // Append to the system prompt so the LLM knows the available commands.
-  commandReference: string
-}
-
-// ---------------------------------------------------------------------------
-// Agent step I/O types
-// ---------------------------------------------------------------------------
-
-export type AgentMessage = {
-  text: string
-  source: RuntimeMessageSource
-}
-
-export type ToolCallResult = {
-  name: string                    // canonical tool name
-  args: Record<string, unknown>   // parsed and coerced arg values
-  raw: string                     // the original command line as it appeared in the message
-  prompt?: Resolvable<string>     // from the tool definition, for the caller to inject
-  validation?: {
-    valid: boolean
-    errors?: string[]
-  }
-}
-
-export type AgentStepResult = {
-  // Dispatch candidates ordered by appearance in the message. Caller decides what to execute.
-  candidates: ToolCallResult[]
+  // Auto-generated dispatch reference listing the agent name, steps, and /agent syntax.
+  // Included in the prompt produced by buildAgentPrompt().
+  dispatchReference: string
 }
 
 // ---------------------------------------------------------------------------
@@ -400,40 +379,3 @@ export type ApiResponse = {
   body: unknown
 }
 
-// ---------------------------------------------------------------------------
-// Workflow spec types
-// ---------------------------------------------------------------------------
-
-export type WorkflowTrigger =
-  | { kind: 'discussion'; category: string; command?: string }
-  | { kind: 'cron'; expr: string }
-  | { kind: 'manual' }
-  | { kind: 'spawn'; maxDepth: number }
-
-export type WorkflowStep = {
-  kind: 'agent'
-  specName: string
-  approveBefore?: boolean
-  approveAfter?: boolean
-}
-
-// Derived from WorkflowSpec.steps: one entry per gate declared in the step list.
-export type GateDescriptor = {
-  stepIndex: number
-  position: 'before' | 'after'
-}
-
-export type WorkflowSpec = {
-  __type: 'workflow'
-  name: string
-  trigger: WorkflowTrigger
-  steps: WorkflowStep[]
-}
-
-export type WorkflowPlan = {
-  specName: string
-  trigger: WorkflowTrigger
-  steps: WorkflowStep[]
-  // Flat list of all approval gates derived from the steps.
-  gates: GateDescriptor[]
-}

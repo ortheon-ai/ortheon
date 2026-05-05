@@ -1,34 +1,42 @@
-import { agent, tool } from '../../../src/dsl.js'
+import { agent, agentStep, tool } from '../../../src/dsl.js'
 
 /**
- * Demo agent spec showing requires_approval on a destructive tool.
+ * Demo agent spec: release pipeline driven by PR comments.
+ *
+ * Tools are restricted to operations not available via shell (git, gh, curl).
+ * Reading the PR, checking CI, and merging are left to cmdland's shell access.
  *
  * ortheon expand examples/specs/demo/deploy-agent.ortheon.ts
  */
 export default agent('deploy-agent', {
-  system: 'You are a deployment bot. Prepare release notes, then merge the PR and deploy.',
+  system:
+    'You are a deployment bot. cmdland gives you shell access (git, gh, etc.) ' +
+    'so use those for standard developer work. Only call the tools below for ' +
+    'actions that are not available via the shell.',
+
+  steps: [
+    agentStep(
+      'plan',
+      'Read the PR with `gh pr view` and draft release notes. ' +
+      "When the notes are ready, post '/agent deploy-agent review' to advance.",
+    ),
+    agentStep(
+      'review',
+      'Post the release notes as a PR comment for the team to read. ' +
+      "Then ask the user to post '/agent deploy-agent ship' once they approve the deploy.",
+    ),
+    agentStep(
+      'ship',
+      'Call trigger-deploy for the production environment. ' +
+      'When the deploy is confirmed, do not post any /agent line; the run is complete.',
+    ),
+  ],
 
   tools: [
-    tool('read-pr', {
-      source: 'llm',
-      args: { pr: { type: 'string', required: true } },
-      prompt: 'Fetch the PR diff and description.',
-    }),
-    tool('write-release-notes', {
-      source: 'llm',
-      args: { content: { type: 'string', required: true } },
-    }),
-    tool('merge-pr', {
-      source: 'llm',
-      requires_approval: true,
-      args: { pr: { type: 'string', required: true } },
-      prompt: 'Merge the pull request after human approval.',
-    }),
     tool('trigger-deploy', {
-      source: 'llm',
-      requires_approval: true,
-      args: { env: { type: 'string', required: true } },
-      prompt: 'Trigger a deployment to the specified environment after human approval.',
+      description:
+        'Trigger an internal deployment pipeline run. Not available via gh/git.',
+      args: { env: { type: 'string', required: true, description: 'Target environment name (e.g. production, staging)' } },
     }),
   ],
 })

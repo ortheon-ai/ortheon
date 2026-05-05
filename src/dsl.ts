@@ -1,5 +1,6 @@
 import type {
   AgentSpec,
+  AgentStep,
   ApiContract,
   ApiOptions,
   ApiStep,
@@ -15,10 +16,8 @@ import type {
   Flow,
   FlowConfig,
   FlowItem,
-  GateDescriptor,
   GenerateKind,
   GenerateValue,
-  MatchSource,
   MatcherName,
   RefValue,
   Resolvable,
@@ -31,10 +30,6 @@ import type {
   StepAction,
   Toolset,
   UseStep,
-  WorkflowSpec,
-  WorkflowStep,
-  WorkflowTrigger,
-  WorkflowPlan,
 } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -203,21 +198,15 @@ export function spec(name: string, config: SpecConfig): Spec {
 // ---------------------------------------------------------------------------
 
 export type ConversationToolConfig = {
-  aliases?: string[]
-  source?: MatchSource
+  description?: Resolvable<string>
   args?: ArgSpec
-  prompt?: Resolvable<string>
-  requires_approval?: boolean
 }
 
 export function tool(name: string, config: ConversationToolConfig): ConversationTool {
   return {
     name,
-    ...(config.aliases !== undefined ? { aliases: config.aliases } : {}),
-    ...(config.source !== undefined ? { source: config.source } : {}),
+    ...(config.description !== undefined ? { description: config.description } : {}),
     ...(config.args !== undefined ? { args: config.args } : {}),
-    ...(config.prompt !== undefined ? { prompt: config.prompt } : {}),
-    ...(config.requires_approval !== undefined ? { requires_approval: config.requires_approval } : {}),
   }
 }
 
@@ -225,8 +214,13 @@ export function toolset(name: string, tools: ConversationTool[]): Toolset {
   return { __type: 'toolset', name, tools }
 }
 
+export function agentStep(name: string, prompt: Resolvable<string>): AgentStep {
+  return { name, prompt }
+}
+
 export type AgentConfig = {
   system: Resolvable<string>
+  steps: AgentStep[]
   tools: Array<ConversationTool | Toolset>
 }
 
@@ -235,6 +229,7 @@ export function agent(name: string, config: AgentConfig): AgentSpec {
     __type: 'agent',
     name,
     system: config.system,
+    steps: config.steps,
     tools: config.tools,
   }
 }
@@ -243,64 +238,4 @@ export function agent(name: string, config: AgentConfig): AgentSpec {
 // Re-export types for spec file convenience
 // ---------------------------------------------------------------------------
 
-export type { AgentSpec, ArgField, ArgSpec, ArgType, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, MatchSource, Spec, SpecExpectedOutcome, Step, Section, ApiContract, Toolset } from './types.js'
-
-// ---------------------------------------------------------------------------
-// Workflow spec builders
-// ---------------------------------------------------------------------------
-
-export type WorkflowStepConfig = {
-  approveBefore?: boolean
-  approveAfter?: boolean
-}
-
-export type WorkflowConfig = {
-  trigger: WorkflowTrigger
-  steps: WorkflowStep[]
-}
-
-export function workflow(name: string, config: WorkflowConfig): WorkflowSpec {
-  return {
-    __type: 'workflow',
-    name,
-    trigger: config.trigger,
-    steps: config.steps,
-  }
-}
-
-/** Workflow trigger builders. Pass the result as the `trigger` field in `workflow()`. */
-export const trigger = {
-  discussion(config: { category: string; command?: string }): WorkflowTrigger {
-    return {
-      kind: 'discussion',
-      category: config.category,
-      ...(config.command !== undefined ? { command: config.command } : {}),
-    }
-  },
-
-  cron(expr: string): WorkflowTrigger {
-    return { kind: 'cron', expr }
-  },
-
-  manual(): WorkflowTrigger {
-    return { kind: 'manual' }
-  },
-
-  spawn(config: { maxDepth: number }): WorkflowTrigger {
-    return { kind: 'spawn', maxDepth: config.maxDepth }
-  },
-}
-
-/** Workflow step builders. Pass results as the `steps` array in `workflow()`. */
-export const workflowStep = {
-  agent(specName: string, config?: WorkflowStepConfig): WorkflowStep {
-    return {
-      kind: 'agent',
-      specName,
-      ...(config?.approveBefore !== undefined ? { approveBefore: config.approveBefore } : {}),
-      ...(config?.approveAfter !== undefined ? { approveAfter: config.approveAfter } : {}),
-    }
-  },
-}
-
-export type { GateDescriptor, WorkflowSpec, WorkflowStep, WorkflowTrigger, WorkflowPlan } from './types.js'
+export type { AgentSpec, AgentStep, ArgField, ArgSpec, ArgType, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, Spec, SpecExpectedOutcome, Step, Section, ApiContract, Toolset } from './types.js'
