@@ -2,24 +2,59 @@ import type { AgentPlan, SerializedTool } from './types.js'
 import { formatDispatchReference } from './compiler.js'
 
 // ---------------------------------------------------------------------------
+// formatToolsForPrompt
+//
+// Renders a SerializedTool[] as a markdown "Available scripts" section.
+// Returns an empty string when the array is empty (section is omitted).
+// ---------------------------------------------------------------------------
+
+export function formatToolsForPrompt(tools: SerializedTool[]): string {
+  if (tools.length === 0) return ''
+
+  const lines: string[] = [
+    '## Available scripts',
+    '',
+    'These scripts are pre-installed in this workspace. AGENTS.md may describe more — ' +
+    'these are highlighted because the agent spec considers them important for this run.',
+    '',
+  ]
+
+  for (const t of tools) {
+    const descStr = typeof t.description === 'string' ? t.description : JSON.stringify(t.description)
+    lines.push(`- ${t.name} — ${descStr}`)
+    if (t.path !== undefined) {
+      const pathStr = typeof t.path === 'string' ? t.path : JSON.stringify(t.path)
+      lines.push(`  Path:  ${pathStr}`)
+    }
+    if (t.usage !== undefined) {
+      const usageStr = typeof t.usage === 'string' ? t.usage : JSON.stringify(t.usage)
+      lines.push(`  Usage: ${usageStr}`)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n').trimEnd()
+}
+
+// ---------------------------------------------------------------------------
 // buildAgentPrompt
 //
-// Constructs the system prompt and tool list to pass to the agent runner for
-// a given step. stepName must match an AgentStep.name on the plan; throws if
+// Constructs the full system prompt string to pass to the agent runner for a
+// given step. stepName must match an AgentStep.name on the plan; throws if
 // not found.
+//
+// Output sections (separated by blank lines):
+//   1. System prompt
+//   2. Step "<name>" (<i> of <n>): <step prompt>
+//   3. dispatchReference (step progression instructions)
+//   4. Available scripts (if plan.tools is non-empty)
 //
 // env() and secret() markers in system and step prompt are passed through
 // unresolved. The orchestrator is expected to resolve them from the runtime
-// environment before calling this function, or to substitute resolved strings
-// directly.
+// environment, or substitute resolved strings directly.
 // ---------------------------------------------------------------------------
 
-export type AgentPromptPayload = {
-  prompt: string
-  tools: SerializedTool[]
-}
-
-export function buildAgentPrompt(plan: AgentPlan, stepName: string): AgentPromptPayload {
+export function buildAgentPrompt(plan: AgentPlan, stepName: string): string {
   const idx = plan.steps.findIndex(s => s.name === stepName)
   if (idx === -1) {
     throw new Error(
@@ -42,16 +77,21 @@ export function buildAgentPrompt(plan: AgentPlan, stepName: string): AgentPrompt
 
   const dispatchRef = formatDispatchReference(plan.specName, plan.steps, stepName)
 
-  const prompt = [
+  const parts = [
     systemStr,
     '',
     `Step "${stepName}" (${position} of ${total}):`,
     promptStr,
     '',
     dispatchRef,
-  ].join('\n')
+  ]
 
-  return { prompt, tools: plan.tools }
+  const toolsSection = formatToolsForPrompt(plan.tools)
+  if (toolsSection) {
+    parts.push('', toolsSection)
+  }
+
+  return parts.join('\n')
 }
 
 // ---------------------------------------------------------------------------

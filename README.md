@@ -151,7 +151,8 @@ export default agent("deploy-agent", {
   tools: [
     tool("trigger-deploy", {
       description: "Trigger an internal deployment pipeline. Not available via gh/git.",
-      args: { env: { type: "string", required: true } },
+      path: "/usr/local/bin/trigger-deploy",
+      usage: "trigger-deploy --env <production|staging>",
     }),
   ],
 });
@@ -167,11 +168,11 @@ const dispatches = parseAgentDispatch(comment.body);
 // dispatches[0] → { agentName: 'deploy-agent', stepName: 'plan', raw: '...' }
 
 const plan = compileAgent(spec);
-const { prompt, tools } = buildAgentPrompt(plan, dispatches[0].stepName ?? plan.steps[0].name);
-// pass prompt + tools to the agent runner
+const systemPrompt = buildAgentPrompt(plan, dispatches[0].stepName ?? plan.steps[0].name);
+// pass systemPrompt to the agent runner
 ```
 
-Compiled tools are Anthropic-shaped (`input_schema`) and ready to pass directly to Claude. `ortheon expand` prints the full agent plan including the dispatch reference.
+`buildAgentPrompt` returns a single string that includes the system prompt, step prompt, dispatch reference, and an "Available scripts" section listing the agent's tools. `ortheon expand` prints the full agent plan including the dispatch reference.
 
 See [docs/agents.md](docs/agents.md) for the full reference.
 
@@ -553,7 +554,7 @@ Five only. No matcher jungle.
 | -------- | ------- |
 | `agent(name, config)` | Top-level agent spec |
 | `agentStep(name, prompt)` | Named step with a prompt for the LLM |
-| `tool(name, config)` | Tool declaration (Anthropic-shaped; reserved for non-shell actions) |
+| `tool(name, config)` | Workspace script hint (rendered into the system prompt; reserved for non-shell-synthesizable scripts) |
 | `toolset(name, tools)` | Named, shareable group of tools |
 
 **`agent()` config:**
@@ -562,23 +563,25 @@ Five only. No matcher jungle.
 | ----- | ---- | ----------- |
 | `system` | `Resolvable<string>` | LLM system prompt. Use `env()` for externalized prompts; avoid `secret()`. |
 | `steps` | `AgentStep[]` | Required. At least one named step. Each step has a `name` (kebab-case) and `prompt`. |
-| `tools` | `Array<ConversationTool \| Toolset>` | Tools reserved for non-shell-synthesizable actions. |
+| `tools` | `Array<ConversationTool \| Toolset>` | Workspace scripts to highlight in the system prompt. |
 
-**`tool()` config** (all fields optional):
+**`tool()` config:**
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `description` | `Resolvable<string>` | Passed to Claude as the tool description. |
-| `args` | `ArgSpec` | `Record<string, { type: 'string' \| 'number' \| 'boolean'; required?: boolean; description?: string }>`. |
+| `description` | `Resolvable<string>` | Required. Rendered into the "Available scripts" section of the system prompt. |
+| `path` | `Resolvable<string>` | Optional. Absolute path to the script inside the workspace (e.g. `/usr/local/bin/trigger-deploy`). |
+| `usage` | `Resolvable<string>` | Optional. Free-form CLI invocation hint (e.g. `trigger-deploy --env <production\|staging>`). |
 
-Compiled tools are emitted with Anthropic-shaped `input_schema` (ready for Claude's native tool calling). To share tools across multiple agent specs, group them with `toolset(name, tools)` — the compiler flattens toolsets and the validator catches name conflicts globally.
+Tools are rendered as a markdown "Available scripts" section inside the system prompt by `buildAgentPrompt()` — they are not sent to Claude as native API tool definitions. To share tools across multiple agent specs, group them with `toolset(name, tools)` — the compiler flattens toolsets and the validator catches name conflicts globally.
 
 **Agent helpers:**
 
 | Function | Description |
 | -------- | ----------- |
-| `buildAgentPrompt(plan, stepName)` | Returns `{ prompt, tools }` — the step-aware system prompt string and the Anthropic-shaped tool list. Throws if `stepName` not found. |
+| `buildAgentPrompt(plan, stepName)` | Build the full system prompt string for the agent runner. Throws if `stepName` not found. |
 | `parseAgentDispatch(text)` | Parse `/agent name step?` lines from a PR or discussion comment body. Skips code fences and blockquotes. |
+| `formatToolsForPrompt(tools)` | Render a `SerializedTool[]` as the "Available scripts" markdown section. Returns `""` when empty. |
 
 See [docs/agents.md](docs/agents.md) for the full reference.
 

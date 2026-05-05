@@ -11,7 +11,7 @@ import { agent, agentStep, tool } from '../../../src/dsl.js'
 export default agent('deploy-agent', {
   system:
     'You are a deployment bot. You have shell access (git, gh, etc.) ' +
-    'so use those for standard developer work. Only call the tools below for ' +
+    'so use those for standard developer work. Only call the scripts below for ' +
     'actions that are not available via the shell.',
 
   steps: [
@@ -34,9 +34,9 @@ export default agent('deploy-agent', {
 
   tools: [
     tool('trigger-deploy', {
-      description:
-        'Trigger an internal deployment pipeline run. Not available via gh/git.',
-      args: { env: { type: 'string', required: true, description: 'Target environment name (e.g. production, staging)' } },
+      description: 'Trigger an internal deployment pipeline run. Not available via gh/git.',
+      path: '/usr/local/bin/trigger-deploy',
+      usage: 'trigger-deploy --env <production|staging>',
     }),
   ],
 })

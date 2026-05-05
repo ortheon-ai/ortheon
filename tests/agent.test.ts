@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { agent, agentStep, tool, toolset, env, secret } from '../src/dsl.js'
 import { compileAgent, formatAgentSpec, formatDispatchReference } from '../src/compiler.js'
 import { validateAgent, validateToolset } from '../src/validator.js'
-import { buildAgentPrompt, parseAgentDispatch } from '../src/agent.js'
+import { buildAgentPrompt, parseAgentDispatch, formatToolsForPrompt } from '../src/agent.js'
 import { createApp, type ServerSuite } from '../src/server/app.js'
 import type { AgentSpec, AgentPlan } from '../src/types.js'
 
@@ -22,7 +22,8 @@ const deployAgent: AgentSpec = agent('deploy-agent', {
   tools: [
     tool('trigger-deploy', {
       description: 'Trigger an internal deployment pipeline. Not available via gh/git.',
-      args: { env: { type: 'string', required: true, description: 'Target environment' } },
+      path: '/usr/local/bin/trigger-deploy',
+      usage: 'trigger-deploy --env <production|staging>',
     }),
   ],
 })
@@ -63,17 +64,24 @@ describe('agent() / agentStep() / tool() DSL', () => {
     expect(s.prompt).toBe('Do the thing.')
   })
 
-  it('tool() preserves name, description, args', () => {
+  it('tool() preserves name, description, path, usage', () => {
     const t = deployAgent.tools[0]!
     expect(t.name).toBe('trigger-deploy')
-    expect((t as { description?: string }).description).toContain('deployment pipeline')
-    expect((t as { args?: unknown }).args).toBeDefined()
+    expect(t.description).toContain('deployment pipeline')
+    expect(t.path).toBe('/usr/local/bin/trigger-deploy')
+    expect(t.usage).toBe('trigger-deploy --env <production|staging>')
   })
 
-  it('tool() without description or args omits those keys', () => {
-    const t = tool('bare', {})
-    expect('description' in t).toBe(false)
-    expect('args' in t).toBe(false)
+  it('tool() without optional fields omits path and usage', () => {
+    const t = tool('bare', { description: 'A bare tool.' })
+    expect('path' in t).toBe(false)
+    expect('usage' in t).toBe(false)
+  })
+
+  it('tool() with only path omits usage', () => {
+    const t = tool('path-only', { description: 'Has a path.', path: '/usr/local/bin/path-only' })
+    expect(t.path).toBe('/usr/local/bin/path-only')
+    expect('usage' in t).toBe(false)
   })
 
   it('agent() accepts env() as system', () => {
@@ -108,29 +116,23 @@ describe('compileAgent()', () => {
     expect(plan.steps[2]!.name).toBe('ship')
   })
 
-  it('converts tool args to Anthropic input_schema', () => {
+  it('tool has name, description, path, usage', () => {
     const t = plan.tools[0]!
     expect(t.name).toBe('trigger-deploy')
-    expect(t.input_schema.type).toBe('object')
-    expect(t.input_schema.properties['env']).toEqual({ type: 'string', description: 'Target environment' })
-    expect(t.input_schema.required).toContain('env')
+    expect(t.description).toBe('Trigger an internal deployment pipeline. Not available via gh/git.')
+    expect(t.path).toBe('/usr/local/bin/trigger-deploy')
+    expect(t.usage).toBe('trigger-deploy --env <production|staging>')
   })
 
-  it('tool with no args produces empty input_schema', () => {
-    const s = agent('a', { system: 'hi', steps: [agentStep('go', 'go')], tools: [tool('ping', {})] })
-    const p = compileAgent(s)
-    expect(p.tools[0]!.input_schema).toEqual({ type: 'object', properties: {}, required: [] })
-  })
-
-  it('non-required args are not in input_schema.required', () => {
+  it('tool without optional fields omits path and usage in plan', () => {
     const s = agent('a', {
       system: 'hi',
       steps: [agentStep('go', 'go')],
-      tools: [tool('cmd', { args: { opt: { type: 'string' }, req: { type: 'string', required: true } } })],
+      tools: [tool('ping', { description: 'Ping.' })],
     })
     const p = compileAgent(s)
-    expect(p.tools[0]!.input_schema.required).toEqual(['req'])
-    expect(Object.keys(p.tools[0]!.input_schema.properties)).toContain('opt')
+    expect('path' in p.tools[0]!).toBe(false)
+    expect('usage' in p.tools[0]!).toBe(false)
   })
 
   it('preserves env() markers in system', () => {
@@ -161,17 +163,17 @@ describe('compileAgent() with toolsets', () => {
     const s = agent('bot', {
       system: 'hi',
       steps: [agentStep('go', 'go')],
-      tools: [ts, tool('inline', {})],
+      tools: [ts, tool('inline', { description: 'Inline tool.' })],
     })
     const p = compileAgent(s)
     expect(p.tools.map(t => t.name)).toEqual(['notify', 'flag', 'inline'])
   })
 
-  it('each flattened tool has input_schema', () => {
-    const ts = toolset('ops', [tool('notify', {})])
+  it('each flattened tool preserves description', () => {
+    const ts = toolset('ops', [tool('notify', { description: 'Notify team.' })])
     const s = agent('bot', { system: 'hi', steps: [agentStep('go', 'go')], tools: [ts] })
     const p = compileAgent(s)
-    expect(p.tools[0]!.input_schema).toBeDefined()
+    expect(p.tools[0]!.description).toBe('Notify team.')
   })
 })
 
@@ -228,66 +230,124 @@ describe('buildAgentPrompt()', () => {
     expect(() => buildAgentPrompt(plan, 'nonexistent')).toThrow('no step named "nonexistent"')
   })
 
+  it('returns a string', () => {
+    expect(typeof buildAgentPrompt(plan, 'plan')).toBe('string')
+  })
+
   it('includes the system prompt', () => {
-    const { prompt } = buildAgentPrompt(plan, 'plan')
+    const prompt = buildAgentPrompt(plan, 'plan')
     expect(prompt).toContain('You are a deployment bot.')
   })
 
   it('includes the step name and position for first step', () => {
-    const { prompt } = buildAgentPrompt(plan, 'plan')
+    const prompt = buildAgentPrompt(plan, 'plan')
     expect(prompt).toContain('Step "plan" (1 of 3)')
     expect(prompt).toContain('Draft release notes')
   })
 
   it('includes the step name and position for a middle step', () => {
-    const { prompt } = buildAgentPrompt(plan, 'review')
+    const prompt = buildAgentPrompt(plan, 'review')
     expect(prompt).toContain('Step "review" (2 of 3)')
   })
 
   it('includes the step name and position for the last step', () => {
-    const { prompt } = buildAgentPrompt(plan, 'ship')
+    const prompt = buildAgentPrompt(plan, 'ship')
     expect(prompt).toContain('Step "ship" (3 of 3)')
   })
 
   it('includes the dispatch reference in the output', () => {
-    const { prompt } = buildAgentPrompt(plan, 'plan')
+    const prompt = buildAgentPrompt(plan, 'plan')
     expect(prompt).toContain('deploy-agent')
     expect(prompt).toContain('(current)')
   })
 
   it('shows the next-step dispatch line for a non-final step', () => {
-    const { prompt } = buildAgentPrompt(plan, 'plan')
+    const prompt = buildAgentPrompt(plan, 'plan')
     expect(prompt).toContain('/agent deploy-agent review')
   })
 
   it('shows "do not post" on the final step', () => {
-    const { prompt } = buildAgentPrompt(plan, 'ship')
+    const prompt = buildAgentPrompt(plan, 'ship')
     expect(prompt).toContain('final step')
   })
 
-  it('returns tools identical to plan.tools', () => {
-    const { tools } = buildAgentPrompt(plan, 'plan')
-    expect(tools).toBe(plan.tools)
+  it('includes "Available scripts" section when tools are present', () => {
+    const prompt = buildAgentPrompt(plan, 'plan')
+    expect(prompt).toContain('Available scripts')
+    expect(prompt).toContain('trigger-deploy')
+    expect(prompt).toContain('Trigger an internal deployment pipeline')
   })
 
-  it('returned tools have the correct length', () => {
-    const { tools } = buildAgentPrompt(plan, 'plan')
-    expect(tools).toHaveLength(1)
-    expect(tools[0]!.name).toBe('trigger-deploy')
+  it('includes path and usage in Available scripts section', () => {
+    const prompt = buildAgentPrompt(plan, 'plan')
+    expect(prompt).toContain('/usr/local/bin/trigger-deploy')
+    expect(prompt).toContain('trigger-deploy --env <production|staging>')
   })
 
-  it('returned tools carry Anthropic input_schema', () => {
-    const { tools } = buildAgentPrompt(plan, 'plan')
-    const schema = tools[0]!.input_schema
-    expect(schema.type).toBe('object')
-    expect(schema.properties['env']).toEqual({ type: 'string', description: 'Target environment' })
-    expect(schema.required).toContain('env')
+  it('omits "Available scripts" section when plan has no tools', () => {
+    const p = compileAgent(agent('bare', { system: 'hi', steps: [agentStep('go', 'go')], tools: [] }))
+    const prompt = buildAgentPrompt(p, 'go')
+    expect(prompt).not.toContain('Available scripts')
   })
 
-  it('tools are consistent across different step names', () => {
-    const { tools: t1 } = buildAgentPrompt(plan, 'plan')
-    const { tools: t2 } = buildAgentPrompt(plan, 'ship')
-    expect(t1).toBe(t2)
+  it('prompt is consistent across different step names (same tools)', () => {
+    const p1 = buildAgentPrompt(plan, 'plan')
+    const p2 = buildAgentPrompt(plan, 'ship')
+    expect(p1).toContain('trigger-deploy')
+    expect(p2).toContain('trigger-deploy')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// formatToolsForPrompt
+// ---------------------------------------------------------------------------
+
+describe('formatToolsForPrompt()', () => {
+  it('returns empty string for empty tools array', () => {
+    expect(formatToolsForPrompt([])).toBe('')
+  })
+
+  it('renders tool name and description', () => {
+    const tools = [{ name: 'my-tool', description: 'Does something.' }]
+    const out = formatToolsForPrompt(tools)
+    expect(out).toContain('my-tool')
+    expect(out).toContain('Does something.')
+  })
+
+  it('renders path when present', () => {
+    const tools = [{ name: 'my-tool', description: 'Does something.', path: '/usr/local/bin/my-tool' }]
+    const out = formatToolsForPrompt(tools)
+    expect(out).toContain('Path:')
+    expect(out).toContain('/usr/local/bin/my-tool')
+  })
+
+  it('renders usage when present', () => {
+    const tools = [{ name: 'my-tool', description: 'Does something.', usage: 'my-tool --flag' }]
+    const out = formatToolsForPrompt(tools)
+    expect(out).toContain('Usage:')
+    expect(out).toContain('my-tool --flag')
+  })
+
+  it('omits Path: line when path is absent', () => {
+    const tools = [{ name: 'my-tool', description: 'Does something.' }]
+    const out = formatToolsForPrompt(tools)
+    expect(out).not.toContain('Path:')
+  })
+
+  it('includes the "Available scripts" heading', () => {
+    const tools = [{ name: 'my-tool', description: 'Does something.' }]
+    const out = formatToolsForPrompt(tools)
+    expect(out).toContain('## Available scripts')
+  })
+
+  it('renders multiple tools', () => {
+    const tools = [
+      { name: 'tool-a', description: 'Tool A.' },
+      { name: 'tool-b', description: 'Tool B.' },
+    ]
+    const out = formatToolsForPrompt(tools)
+    expect(out).toContain('tool-a')
+    expect(out).toContain('tool-b')
   })
 })
 
@@ -426,7 +486,7 @@ describe('validateAgent()', () => {
     const s = agent('bad', {
       system: 'hi',
       steps: [agentStep('go', 'go')],
-      tools: [tool('BadName' as string, {})],
+      tools: [tool('BadName' as string, { description: 'Bad.' })],
     })
     const result = validateAgent(s)
     expect(result.valid).toBe(false)
@@ -437,33 +497,53 @@ describe('validateAgent()', () => {
     const s = agent('dup', {
       system: 'hi',
       steps: [agentStep('go', 'go')],
-      tools: [tool('same', {}), tool('same', {})],
+      tools: [tool('same', { description: 'A.' }), tool('same', { description: 'B.' })],
     })
     const result = validateAgent(s)
     expect(result.valid).toBe(false)
     expect(result.errors.some(e => e.message.includes('Duplicate tool name'))).toBe(true)
   })
 
-  it('errors on invalid arg type', () => {
+  it('errors on empty tool description', () => {
     const s = agent('bad', {
       system: 'hi',
       steps: [agentStep('go', 'go')],
-      tools: [tool('t', { args: { count: { type: 'array' as 'string' } } })],
+      tools: [tool('t', { description: '  ' as string })],
     })
     const result = validateAgent(s)
     expect(result.valid).toBe(false)
-    expect(result.errors.some(e => e.message.includes('invalid type'))).toBe(true)
+    expect(result.errors.some(e => e.message.includes('description must not be empty'))).toBe(true)
   })
 
-  it('errors on non-kebab-case arg name', () => {
+  it('errors on path not starting with /', () => {
     const s = agent('bad', {
       system: 'hi',
       steps: [agentStep('go', 'go')],
-      tools: [tool('t', { args: { myField: { type: 'string' } } })],
+      tools: [tool('t', { description: 'Tool.', path: 'usr/local/bin/t' })],
     })
     const result = validateAgent(s)
     expect(result.valid).toBe(false)
-    expect(result.errors.some(e => e.message.includes('kebab-case'))).toBe(true)
+    expect(result.errors.some(e => e.message.includes('absolute path'))).toBe(true)
+  })
+
+  it('passes when path starts with /', () => {
+    const s = agent('good', {
+      system: 'hi',
+      steps: [agentStep('go', 'go')],
+      tools: [tool('t', { description: 'Tool.', path: '/usr/local/bin/t' })],
+    })
+    expect(validateAgent(s).valid).toBe(true)
+  })
+
+  it('errors on empty usage string', () => {
+    const s = agent('bad', {
+      system: 'hi',
+      steps: [agentStep('go', 'go')],
+      tools: [tool('t', { description: 'Tool.', usage: '  ' })],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.message.includes('usage must not be empty'))).toBe(true)
   })
 
   it('warns on secret() in tool description', () => {
@@ -502,7 +582,10 @@ describe('validateAgent()', () => {
 
 describe('validateToolset()', () => {
   it('passes a valid toolset', () => {
-    const ts = toolset('ops', [tool('notify', {}), tool('flag', {})])
+    const ts = toolset('ops', [
+      tool('notify', { description: 'Notify.' }),
+      tool('flag', { description: 'Flag.' }),
+    ])
     expect(validateToolset(ts).valid).toBe(true)
   })
 
@@ -512,7 +595,10 @@ describe('validateToolset()', () => {
   })
 
   it('errors on duplicate tool names within a toolset', () => {
-    const ts = toolset('dupe', [tool('same', {}), tool('same', {})])
+    const ts = toolset('dupe', [
+      tool('same', { description: 'A.' }),
+      tool('same', { description: 'B.' }),
+    ])
     expect(validateToolset(ts).valid).toBe(false)
   })
 
@@ -543,9 +629,16 @@ describe('formatAgentSpec()', () => {
     expect(out).toContain('ship')
   })
 
-  it('includes tool names', () => {
+  it('includes tool names and descriptions', () => {
     const out = formatAgentSpec(deployAgent)
     expect(out).toContain('trigger-deploy')
+    expect(out).toContain('Trigger an internal deployment pipeline')
+  })
+
+  it('includes path and usage in tool output', () => {
+    const out = formatAgentSpec(deployAgent)
+    expect(out).toContain('/usr/local/bin/trigger-deploy')
+    expect(out).toContain('trigger-deploy --env <production|staging>')
   })
 
   it('includes the dispatch reference section', () => {
@@ -555,7 +648,7 @@ describe('formatAgentSpec()', () => {
   })
 
   it('renders toolset header before grouped tools', () => {
-    const ts = toolset('ops', [tool('notify', {})])
+    const ts = toolset('ops', [tool('notify', { description: 'Notify team.' })])
     const s = agent('bot', { system: 'hi', steps: [agentStep('go', 'go')], tools: [ts] })
     const out = formatAgentSpec(s)
     expect(out).toContain('[toolset: ops]')
@@ -665,7 +758,7 @@ describe('server: GET /api/suites/:id/execution-plan for agent suite', () => {
     expect(b['planVersion']).toBe(2)
   })
 
-  it('plan has specName, steps, tools with input_schema, and dispatchReference', async () => {
+  it('plan has specName, steps, tools with description/path/usage, and dispatchReference', async () => {
     const { body } = await get(srv.baseUrl, `/api/suites/${suite.id}/execution-plan`)
     const plan = (body as Record<string, unknown>)['plan'] as Record<string, unknown>
     expect(plan['specName']).toBe('deploy-agent')
@@ -673,19 +766,11 @@ describe('server: GET /api/suites/:id/execution-plan for agent suite', () => {
     expect((plan['steps'] as unknown[]).length).toBe(3)
     const tools = plan['tools'] as Array<Record<string, unknown>>
     expect(tools[0]!['name']).toBe('trigger-deploy')
-    expect(tools[0]!['input_schema']).toBeDefined()
+    expect(typeof tools[0]!['description']).toBe('string')
+    expect(tools[0]!['path']).toBe('/usr/local/bin/trigger-deploy')
+    expect(tools[0]!['usage']).toBe('trigger-deploy --env <production|staging>')
+    expect(tools[0]!['input_schema']).toBeUndefined()
     expect(typeof plan['dispatchReference']).toBe('string')
     expect((plan['dispatchReference'] as string)).toContain('deploy-agent')
-  })
-
-  it('input_schema has correct structure', async () => {
-    const { body } = await get(srv.baseUrl, `/api/suites/${suite.id}/execution-plan`)
-    const plan = (body as Record<string, unknown>)['plan'] as Record<string, unknown>
-    const tools = plan['tools'] as Array<Record<string, unknown>>
-    const schema = tools[0]!['input_schema'] as Record<string, unknown>
-    expect(schema['type']).toBe('object')
-    expect(schema['properties']).toBeDefined()
-    expect(Array.isArray(schema['required'])).toBe(true)
-    expect((schema['required'] as string[])).toContain('env')
   })
 })

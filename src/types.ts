@@ -274,19 +274,11 @@ export type ValidationResult = {
 // Agent spec types
 // ---------------------------------------------------------------------------
 
-// Arg schema for tool input validation and Anthropic input_schema generation
-export type ArgType = 'string' | 'number' | 'boolean'
-export type ArgField = {
-  type: ArgType
-  required?: boolean
-  description?: string
-}
-export type ArgSpec = Record<string, ArgField>
-
 export type ConversationTool = {
   name: string                      // kebab-case tool name
-  description?: Resolvable<string>  // passed to the LLM as tool description
-  args?: ArgSpec
+  description: Resolvable<string>   // required; rendered into the system prompt
+  path?: Resolvable<string>         // optional absolute path inside the workspace
+  usage?: Resolvable<string>        // optional free-form CLI invocation hint
 }
 
 // Named group of tools for sharing across agents.
@@ -314,19 +306,16 @@ export type AgentSpec = {
 }
 
 // ---------------------------------------------------------------------------
-// Agent compiled plan types (JSON-serializable, Anthropic-shaped)
+// Agent compiled plan types (JSON-serializable)
 // ---------------------------------------------------------------------------
 
-// Anthropic-shaped tool definition emitted by the compiler.
-// The input_schema is built from the tool's ArgSpec.
+// Workspace-script tool definition emitted by the compiler.
+// Rendered as markdown in the system prompt by buildAgentPrompt().
 export type SerializedTool = {
   name: string
-  description?: Resolvable<string>
-  input_schema: {
-    type: 'object'
-    properties: Record<string, { type: ArgType; description?: string }>
-    required: string[]
-  }
+  description: Resolvable<string>
+  path?: Resolvable<string>
+  usage?: Resolvable<string>
 }
 
 export type AgentPlan = {

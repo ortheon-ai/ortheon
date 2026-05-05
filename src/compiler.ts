@@ -4,8 +4,6 @@ import type {
   AgentStep,
   ApiContract,
   ApiStep,
-  ArgField,
-  ArgType,
   BrowserStep,
   ConversationTool,
   ExecutableStep,
@@ -385,22 +383,6 @@ export function flattenTools(entries: AgentSpec['tools']): ConversationTool[] {
   return result
 }
 
-function buildInputSchema(args: Record<string, ArgField> | undefined): SerializedTool['input_schema'] {
-  const argSpec = args
-  if (!argSpec || Object.keys(argSpec).length === 0) {
-    return { type: 'object', properties: {}, required: [] }
-  }
-  const properties: Record<string, { type: ArgType; description?: string }> = {}
-  const required: string[] = []
-  for (const [fieldName, field] of Object.entries(argSpec)) {
-    const prop: { type: ArgType; description?: string } = { type: field.type }
-    if (field.description) prop.description = field.description
-    properties[fieldName] = prop
-    if (field.required) required.push(fieldName)
-  }
-  return { type: 'object', properties, required }
-}
-
 export function formatDispatchReference(specName: string, steps: AgentStep[], activeStepName?: string): string {
   if (steps.length === 0) return ''
 
@@ -448,8 +430,9 @@ export function formatDispatchReference(specName: string, steps: AgentStep[], ac
 export function compileAgent(spec: AgentSpec): AgentPlan {
   const tools: SerializedTool[] = flattenTools(spec.tools).map(t => ({
     name: t.name,
-    ...(t.description !== undefined ? { description: t.description } : {}),
-    input_schema: buildInputSchema(t.args),
+    description: t.description,
+    ...(t.path !== undefined ? { path: t.path } : {}),
+    ...(t.usage !== undefined ? { usage: t.usage } : {}),
   }))
 
   return {
@@ -532,17 +515,16 @@ export function formatAgentSpec(spec: AgentSpec): string {
 }
 
 function formatSpecToolEntry(t: ConversationTool, lines: string[], indent: string): void {
-  const descStr = t.description
-    ? (typeof t.description === 'string' ? t.description : formatResolvable(t.description))
-    : '(no description)'
-  lines.push(`${indent}tool: ${t.name}   ${descStr}`)
-
-  if (t.args && Object.keys(t.args).length > 0) {
-    const argParts = Object.entries(t.args).map(([k, f]) => {
-      const req = f.required ? ', required' : ''
-      return `${k} (${f.type}${req})`
-    })
-    lines.push(`${indent}  args: ${argParts.join(', ')}`)
+  const descStr = typeof t.description === 'string' ? t.description : formatResolvable(t.description)
+  lines.push(`${indent}tool: ${t.name}`)
+  lines.push(`${indent}  ${descStr}`)
+  if (t.path !== undefined) {
+    const pathStr = typeof t.path === 'string' ? t.path : formatResolvable(t.path)
+    lines.push(`${indent}  Path:  ${pathStr}`)
+  }
+  if (t.usage !== undefined) {
+    const usageStr = typeof t.usage === 'string' ? t.usage : formatResolvable(t.usage)
+    lines.push(`${indent}  Usage: ${usageStr}`)
   }
 }
 
