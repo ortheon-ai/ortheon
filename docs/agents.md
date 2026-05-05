@@ -1,6 +1,6 @@
 # Agent specs
 
-Agent specs are the second kind of Ortheon spec. Where a behavioral spec describes what must be true about a system (via `browser()` and `api()` steps), an agent spec describes the steps an LLM-driven agent progresses through and the tools it can call.
+Agent specs are the second kind of Ortheon spec. Where a behavioral spec describes what must be true about a system (via `browser()` and `api()` steps), an agent spec describes the steps an LLM-driven agent progresses through and the workspace scripts it should be aware of.
 
 ---
 
@@ -12,8 +12,8 @@ flowchart TD
   ORCH -- "parseAgentDispatch(body)" --> ORCH
   ORCH -- "GET /api/suites/:id/execution-plan" --> ORTHEON[Ortheon server]
   ORCH -- "buildAgentPrompt(plan, stepName)" --> ORCH
-  ORCH -- "system + history + tools" --> CMD[agent runner]
-  CMD -- "Claude tool calls + reply text" --> ORCH
+  ORCH -- "prompt + GITHUB_TOKEN" --> CMD[agent runner]
+  CMD -- "Claude output + reply text" --> ORCH
   ORCH -- "post comment: /agent name next-step" --> GH
 ```
 
@@ -29,7 +29,7 @@ import { agent, agentStep, tool } from 'ortheon'
 export default agent('deploy-agent', {
   system:
     'You are a deployment bot. You have shell access (git, gh, etc.) ' +
-    'so use those for standard developer work. Only call the tools below for ' +
+    'so use those for standard developer work. Only call the scripts below for ' +
     'actions not available via the shell.',
 
   steps: [
@@ -47,7 +47,8 @@ export default agent('deploy-agent', {
   tools: [
     tool('trigger-deploy', {
       description: 'Trigger an internal deployment pipeline. Not available via gh/git.',
-      args: { env: { type: 'string', required: true } },
+      path: '/usr/local/bin/trigger-deploy',
+      usage: 'trigger-deploy --env <production|staging>',
     }),
   ],
 })
@@ -79,24 +80,17 @@ agentStep(name: string, prompt: Resolvable<string>): AgentStep
 
 ### `tool(name, config)`
 
-Creates a `ConversationTool`. Tools are reserved for actions Claude cannot perform through the agent runner's general shell access.
+Creates a `ConversationTool`. Tools are reserved for scripts/binaries pre-installed in the agent runner's workspace that the agent should be explicitly made aware of. Standard developer tools available via the shell (`git`, `gh`, `curl`, etc.) do not need to be declared here.
 
 ```ts
 tool(name: string, config: {
-  description?: Resolvable<string>
-  args?: ArgSpec
+  description: Resolvable<string>    // required
+  path?: Resolvable<string>          // absolute path inside the workspace
+  usage?: Resolvable<string>         // free-form CLI invocation hint
 }): ConversationTool
 ```
 
-`ArgSpec` is `Record<string, ArgField>` where:
-
-```ts
-type ArgField = {
-  type: 'string' | 'number' | 'boolean'
-  required?: boolean
-  description?: string
-}
-```
+`description` is required. `path` must start with `/` if provided as a literal string.
 
 ### `toolset(name, tools[])`
 
@@ -117,43 +111,35 @@ type AgentPlan = {
   specName: string
   system: Resolvable<string>      // env()/secret() preserved unresolved
   steps: AgentStep[]
-  tools: SerializedTool[]         // Anthropic-shaped tool definitions
+  tools: SerializedTool[]         // workspace-script tool hints
   dispatchReference: string       // auto-generated LLM instructions
 }
 
 type SerializedTool = {
   name: string
-  description?: Resolvable<string>
-  input_schema: {
-    type: 'object'
-    properties: Record<string, { type: ArgType; description?: string }>
-    required: string[]
-  }
+  description: Resolvable<string>
+  path?: Resolvable<string>
+  usage?: Resolvable<string>
 }
 ```
 
-The `tools` array is ready to be passed to the Anthropic Claude API as native tool definitions.
+Tools are rendered as a markdown "Available scripts" section inside the system prompt by `buildAgentPrompt()`. They are not sent to the Claude API as native tool definitions.
 
-The `dispatchReference` lists the agent name, steps in order, and the `/agent` syntax for keeping or advancing the step. It is included in the output of `buildAgentPrompt()`.
+The `dispatchReference` lists the agent name, steps in order, and the `/agent` syntax for keeping or advancing the step. It is included automatically in the output of `buildAgentPrompt()`.
 
 ---
 
 ## `buildAgentPrompt(plan, stepName)`
 
-Constructs the system prompt and Anthropic-shaped tool list to send to the agent runner for a given agent run.
+Constructs the full system prompt string to send to the agent runner for a given agent run.
 
 ```ts
-export type AgentPromptPayload = {
-  prompt: string          // system + step header + dispatch reference
-  tools: SerializedTool[] // Anthropic-shaped tool definitions from plan.tools
-}
-
-export function buildAgentPrompt(plan: AgentPlan, stepName: string): AgentPromptPayload
+export function buildAgentPrompt(plan: AgentPlan, stepName: string): string
 ```
 
 Throws if `stepName` is not found among `plan.steps`.
 
-`prompt` format:
+Output format:
 
 ```
 <system prompt>
@@ -162,11 +148,30 @@ Step "<stepName>" (<position> of <total>):
 <step prompt>
 
 <dispatchReference rendered for this step>
+
+## Available scripts
+
+These scripts are pre-installed in this workspace. AGENTS.md may describe more —
+these are highlighted because the agent spec considers them important for this run.
+
+- trigger-deploy — Trigger an internal deployment pipeline. Not available via gh/git.
+  Path:  /usr/local/bin/trigger-deploy
+  Usage: trigger-deploy --env <production|staging>
 ```
+
+The "Available scripts" section is omitted when `plan.tools` is empty.
 
 The dispatch reference section instructs the LLM how to stay on the current step or advance, and warns it not to post any `/agent` line on the final step.
 
-`tools` is `plan.tools` verbatim — the Anthropic `input_schema` objects produced by `compileAgent()`. Pass both `prompt` and `tools` to the agent runner in a single call.
+---
+
+## `formatToolsForPrompt(tools)`
+
+Renders a `SerializedTool[]` as the "Available scripts" markdown section. Returns an empty string when the array is empty. Useful when the orchestrator needs to render the tools block independently.
+
+```ts
+export function formatToolsForPrompt(tools: SerializedTool[]): string
+```
 
 ---
 
@@ -208,8 +213,9 @@ Both are parsed by the same `parseAgentDispatch()` call in the orchestrator. No 
 - Each `steps[i].name` must be kebab-case and unique within the agent.
 - Each `steps[i].prompt` must be non-empty (or a dynamic value).
 - Tool names must be kebab-case and globally unique across all inline tools and toolsets.
-- Arg field names must be kebab-case.
-- Arg field types must be `string | number | boolean`.
+- `description` is required and must be non-empty. `secret()` in a description triggers a warning.
+- `path` must start with `/` when provided as a literal string.
+- `usage` must be non-empty when provided as a literal string.
 
 ---
 
@@ -225,7 +231,14 @@ Both are parsed by the same `parseAgentDispatch()` call in the orchestrator. No 
     "specName": "deploy-agent",
     "system": "...",
     "steps": [{ "name": "plan", "prompt": "..." }, ...],
-    "tools": [{ "name": "trigger-deploy", "description": "...", "input_schema": {...} }],
+    "tools": [
+      {
+        "name": "trigger-deploy",
+        "description": "Trigger an internal deployment pipeline. Not available via gh/git.",
+        "path": "/usr/local/bin/trigger-deploy",
+        "usage": "trigger-deploy --env <production|staging>"
+      }
+    ],
     "dispatchReference": "..."
   },
   "validation": { "errors": [], "warnings": [] }
@@ -244,6 +257,8 @@ The previous workflow model required a separate spec type, separate compilation 
 
 The dispatch-by-comment model is simpler: the human posts `/agent name step` in a PR comment, and the orchestrator receives it exactly as it would receive an LLM-generated comment. No special cases. The agent spec encodes what the LLM should tell the human to type.
 
-**Why are tools restricted to non-shell-synthesizable actions?**
+**Why are tools scripts/binaries rather than Anthropic-shaped definitions?**
 
-The agent runner provides shell access. Claude can use `git`, `gh`, `curl`, and any other standard developer tool through that shell. Defining `read-pr` or `merge-pr` as Ortheon tools would duplicate capabilities Claude already has. Tools in Ortheon are reserved for internal APIs, platform-specific integrations, and other actions that are not reachable via the command line.
+The agent runner provides shell access. Claude can use `git`, `gh`, `curl`, and any other standard developer tool through that shell. Defining `read-pr` or `merge-pr` as Ortheon tools would duplicate capabilities Claude already has. Tools in Ortheon are reserved for internal APIs, platform-specific integrations, and other scripts that are pre-installed in the workspace but not available as standard shell commands.
+
+Claude does not receive tools as native API tool definitions — they are rendered as markdown in the system prompt ("Available scripts"), which is sufficient for Claude to know to call them via the shell.

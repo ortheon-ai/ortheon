@@ -1,7 +1,6 @@
 import type {
   AgentSpec,
   ApiStep,
-  ArgType,
   BrowserStep,
   ConversationTool,
   Diagnostic,
@@ -492,7 +491,6 @@ function checkRefsInStep(
 // ---------------------------------------------------------------------------
 
 const KEBAB_RE = /^[a-z0-9][a-z0-9-]*$/
-const VALID_ARG_TYPES = new Set<ArgType>(['string', 'number', 'boolean'])
 
 // ---------------------------------------------------------------------------
 // Per-tool validation (shared by validateAgent and validateToolset)
@@ -520,35 +518,41 @@ function validateTool(
     allIdentifiers.add(t.name)
   }
 
-  // description is sent to Claude as the tool description, so secret() leaks the value to the LLM.
-  if (
-    t.description !== undefined &&
-    typeof t.description === 'object' &&
+  // description is required and rendered into the prompt, so secret() would leak to the LLM.
+  if (typeof t.description === 'string') {
+    if (t.description.trim() === '') {
+      errors.push({
+        severity: 'error',
+        message: `tool("${t.name}") description must not be empty`,
+      })
+    }
+  } else if (
     t.description !== null &&
-    '__type' in (t.description as object) &&
-    (t.description as { __type: string }).__type === 'secret'
+    typeof t.description === 'object' &&
+    '__type' in (t.description as object)
   ) {
-    warnings.push({
-      severity: 'warning',
-      message: `tool("${t.name}") description uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
+    if ((t.description as { __type: string }).__type === 'secret') {
+      warnings.push({
+        severity: 'warning',
+        message: `tool("${t.name}") description uses secret() -- this value will be sent to an LLM, creating a leakage risk. Use env() instead.`,
+      })
+    }
+  }
+
+  // path must start with '/' when provided as a literal string
+  if (t.path !== undefined && typeof t.path === 'string' && !t.path.startsWith('/')) {
+    errors.push({
+      severity: 'error',
+      message: `tool("${t.name}") path must be an absolute path starting with "/"`,
     })
   }
 
-  if (t.args) {
-    for (const [fieldName, field] of Object.entries(t.args)) {
-      if (!KEBAB_RE.test(fieldName)) {
-        errors.push({
-          severity: 'error',
-          message: `tool("${t.name}") arg "${fieldName}" must be kebab-case`,
-        })
-      }
-      if (!VALID_ARG_TYPES.has(field.type as ArgType)) {
-        errors.push({
-          severity: 'error',
-          message: `tool("${t.name}") arg "${fieldName}" has invalid type "${field.type}". Valid types: string, number, boolean`,
-        })
-      }
-    }
+  // usage must be non-empty when provided as a literal string
+  if (t.usage !== undefined && typeof t.usage === 'string' && t.usage.trim() === '') {
+    errors.push({
+      severity: 'error',
+      message: `tool("${t.name}") usage must not be empty when provided`,
+    })
   }
 }
 

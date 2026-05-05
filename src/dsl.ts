@@ -4,7 +4,6 @@ import type {
   ApiContract,
   ApiOptions,
   ApiStep,
-  ArgSpec,
   BearerValue,
   BrowserOptions,
   BrowserStep,
@@ -198,15 +197,17 @@ export function spec(name: string, config: SpecConfig): Spec {
 // ---------------------------------------------------------------------------
 
 export type ConversationToolConfig = {
-  description?: Resolvable<string>
-  args?: ArgSpec
+  description: Resolvable<string>
+  path?: Resolvable<string>
+  usage?: Resolvable<string>
 }
 
 export function tool(name: string, config: ConversationToolConfig): ConversationTool {
   return {
     name,
-    ...(config.description !== undefined ? { description: config.description } : {}),
-    ...(config.args !== undefined ? { args: config.args } : {}),
+    description: config.description,
+    ...(config.path !== undefined ? { path: config.path } : {}),
+    ...(config.usage !== undefined ? { usage: config.usage } : {}),
   }
 }
 
@@ -238,4 +239,4 @@ export function agent(name: string, config: AgentConfig): AgentSpec {
 // Re-export types for spec file convenience
 // ---------------------------------------------------------------------------
 
-export type { AgentSpec, AgentStep, ArgField, ArgSpec, ArgType, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, Spec, SpecExpectedOutcome, Step, Section, ApiContract, Toolset } from './types.js'
+export type { AgentSpec, AgentStep, BearerValue, ConversationTool, GenerateKind, GenerateValue, Flow, FlowItem, Spec, SpecExpectedOutcome, Step, Section, ApiContract, Toolset } from './types.js'

@@ -46,8 +46,8 @@ export {
 export { RuntimeContext } from './context.js'
 
 // Agent helpers
-export { buildAgentPrompt, parseAgentDispatch } from './agent.js'
-export type { AgentDispatch, AgentPromptPayload } from './agent.js'
+export { buildAgentPrompt, parseAgentDispatch, formatToolsForPrompt } from './agent.js'
+export type { AgentDispatch } from './agent.js'
 
 // Reporters
 export { consoleReport, jsonReport, consoleSummary } from './reporter.js'
@@ -92,8 +92,5 @@ export type {
   AgentPlan,
   ConversationTool,
   Toolset,
-  ArgType,
-  ArgField,
-  ArgSpec,
   SerializedTool,
 } from './types.js'

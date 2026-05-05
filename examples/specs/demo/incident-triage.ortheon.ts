@@ -11,7 +11,7 @@ import { agent, agentStep, tool } from '../../../src/dsl.js'
 export default agent('incident-triage', {
   system:
     'You are an on-call triage bot. You have shell access (curl, gh, etc.) ' +
-    'so use those for standard ops work. Only call the tools below for actions that ' +
+    'so use those for standard ops work. Only call the scripts below for actions that ' +
     'are not reachable via the shell.',
 
   steps: [
@@ -37,28 +37,19 @@ export default agent('incident-triage', {
 
   tools: [
     tool('notify-on-call', {
-      description:
-        'Page the on-call engineer via PagerDuty. Not available via the shell.',
-      args: {
-        team: { type: 'string', required: true, description: 'Team slug to page (e.g. platform, backend)' },
-        message: { type: 'string', required: true, description: 'Short description of the incident' },
-      },
+      description: 'Page the on-call engineer via PagerDuty. Not available via the shell.',
+      path: '/usr/local/bin/notify-on-call',
+      usage: 'notify-on-call --team <slug> --message <text>',
     }),
     tool('set-feature-flag', {
-      description:
-        'Enable or disable a feature flag in LaunchDarkly. Not available via the shell.',
-      args: {
-        flag: { type: 'string', required: true, description: 'Feature flag key' },
-        enabled: { type: 'boolean', required: true, description: 'Whether to enable or disable the flag' },
-      },
+      description: 'Enable or disable a feature flag in LaunchDarkly. Not available via the shell.',
+      path: '/usr/local/bin/set-feature-flag',
+      usage: 'set-feature-flag --flag <key> --enabled <true|false>',
     }),
     tool('update-incident-status', {
-      description:
-        'Update the incident record status in the internal incident tracker. Not available via the shell.',
-      args: {
-        status: { type: 'string', required: true, description: 'New status: investigating | identified | resolved' },
-        summary: { type: 'string', description: 'Short resolution summary (required when status is resolved)' },
-      },
+      description: 'Update the incident record status in the internal incident tracker. Not available via the shell.',
+      path: '/usr/local/bin/update-incident-status',
+      usage: 'update-incident-status --status <investigating|identified|resolved> [--summary <text>]',
     }),
   ],
 })
