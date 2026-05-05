@@ -47,7 +47,7 @@ export { RuntimeContext } from './context.js'
 
 // Agent helpers
 export { buildAgentPrompt, parseAgentDispatch } from './agent.js'
-export type { AgentDispatch } from './agent.js'
+export type { AgentDispatch, AgentPromptPayload } from './agent.js'
 
 // Reporters
 export { consoleReport, jsonReport, consoleSummary } from './reporter.js'

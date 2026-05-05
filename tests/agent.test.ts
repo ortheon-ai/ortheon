@@ -229,40 +229,65 @@ describe('buildAgentPrompt()', () => {
   })
 
   it('includes the system prompt', () => {
-    const out = buildAgentPrompt(plan, 'plan')
-    expect(out).toContain('You are a deployment bot.')
+    const { prompt } = buildAgentPrompt(plan, 'plan')
+    expect(prompt).toContain('You are a deployment bot.')
   })
 
   it('includes the step name and position for first step', () => {
-    const out = buildAgentPrompt(plan, 'plan')
-    expect(out).toContain('Step "plan" (1 of 3)')
-    expect(out).toContain('Draft release notes')
+    const { prompt } = buildAgentPrompt(plan, 'plan')
+    expect(prompt).toContain('Step "plan" (1 of 3)')
+    expect(prompt).toContain('Draft release notes')
   })
 
   it('includes the step name and position for a middle step', () => {
-    const out = buildAgentPrompt(plan, 'review')
-    expect(out).toContain('Step "review" (2 of 3)')
+    const { prompt } = buildAgentPrompt(plan, 'review')
+    expect(prompt).toContain('Step "review" (2 of 3)')
   })
 
   it('includes the step name and position for the last step', () => {
-    const out = buildAgentPrompt(plan, 'ship')
-    expect(out).toContain('Step "ship" (3 of 3)')
+    const { prompt } = buildAgentPrompt(plan, 'ship')
+    expect(prompt).toContain('Step "ship" (3 of 3)')
   })
 
   it('includes the dispatch reference in the output', () => {
-    const out = buildAgentPrompt(plan, 'plan')
-    expect(out).toContain('deploy-agent')
-    expect(out).toContain('(current)')
+    const { prompt } = buildAgentPrompt(plan, 'plan')
+    expect(prompt).toContain('deploy-agent')
+    expect(prompt).toContain('(current)')
   })
 
   it('shows the next-step dispatch line for a non-final step', () => {
-    const out = buildAgentPrompt(plan, 'plan')
-    expect(out).toContain('/agent deploy-agent review')
+    const { prompt } = buildAgentPrompt(plan, 'plan')
+    expect(prompt).toContain('/agent deploy-agent review')
   })
 
   it('shows "do not post" on the final step', () => {
-    const out = buildAgentPrompt(plan, 'ship')
-    expect(out).toContain('final step')
+    const { prompt } = buildAgentPrompt(plan, 'ship')
+    expect(prompt).toContain('final step')
+  })
+
+  it('returns tools identical to plan.tools', () => {
+    const { tools } = buildAgentPrompt(plan, 'plan')
+    expect(tools).toBe(plan.tools)
+  })
+
+  it('returned tools have the correct length', () => {
+    const { tools } = buildAgentPrompt(plan, 'plan')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]!.name).toBe('trigger-deploy')
+  })
+
+  it('returned tools carry Anthropic input_schema', () => {
+    const { tools } = buildAgentPrompt(plan, 'plan')
+    const schema = tools[0]!.input_schema
+    expect(schema.type).toBe('object')
+    expect(schema.properties['env']).toEqual({ type: 'string', description: 'Target environment' })
+    expect(schema.required).toContain('env')
+  })
+
+  it('tools are consistent across different step names', () => {
+    const { tools: t1 } = buildAgentPrompt(plan, 'plan')
+    const { tools: t2 } = buildAgentPrompt(plan, 'ship')
+    expect(t1).toBe(t2)
   })
 })
 
