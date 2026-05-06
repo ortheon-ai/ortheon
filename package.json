@@ -1,6 +1,6 @@
 {
   "name": "ortheon",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Declarative behavioral spec framework: browser + API steps, named outputs, explicit assertions",
   "type": "module",
   "engines": {
