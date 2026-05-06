@@ -215,8 +215,22 @@ export function toolset(name: string, tools: ConversationTool[]): Toolset {
   return { __type: 'toolset', name, tools }
 }
 
-export function agentStep(name: string, prompt: Resolvable<string>): AgentStep {
-  return { name, prompt }
+export type AgentStepOptions = {
+  /** When true, the agent must not post a /agent dispatch line itself; it
+   *  must instead instruct a human user to post the line to advance. Useful
+   *  for review gates (plans, approvals) where a human must confirm before
+   *  the agent moves on. Has no effect on the final step. */
+  requiresApproval?: boolean
+}
+
+export function agentStep(
+  name: string,
+  prompt: Resolvable<string>,
+  options?: AgentStepOptions,
+): AgentStep {
+  const step: AgentStep = { name, prompt }
+  if (options?.requiresApproval) step.requiresApproval = true
+  return step
 }
 
 export type AgentConfig = {

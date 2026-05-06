@@ -636,6 +636,12 @@ export function validateAgent(spec: AgentSpec): ValidationResult {
           message: `step[${i}]("${s.name}") prompt must not be empty`,
         })
       }
+      if (s.requiresApproval && i === spec.steps.length - 1) {
+        warnings.push({
+          severity: 'warning',
+          message: `step[${i}]("${s.name}") sets requiresApproval but is the final step (no next step to gate); the flag has no effect.`,
+        })
+      }
     }
   }
 

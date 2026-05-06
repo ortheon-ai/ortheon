@@ -294,6 +294,11 @@ export type Toolset = {
 export type AgentStep = {
   name: string               // kebab-case; used in /agent [agent-name] [step-name] dispatch
   prompt: Resolvable<string> // injected as the step-level instruction in buildAgentPrompt()
+  // When true, this step must not self-advance: the dispatch reference will
+  // instruct the agent to defer progression to a human user. Used for review
+  // gates (e.g. an implementation plan that a human must approve before the
+  // next step runs). Has no effect on the final step.
+  requiresApproval?: boolean
 }
 
 export type AgentSpec = {

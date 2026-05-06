@@ -398,25 +398,40 @@ export function formatDispatchReference(specName: string, steps: AgentStep[], ac
 
   if (activeStepName !== undefined) {
     const idx = steps.findIndex(s => s.name === activeStepName)
+    const activeStep = idx >= 0 ? steps[idx]! : null
     const nextStep = idx >= 0 && idx + 1 < steps.length ? steps[idx + 1] : null
     const isLast = nextStep === null
+    const gated = activeStep?.requiresApproval === true && !isLast
 
     lines.push('')
-    lines.push('To keep working on the current step, post a comment containing exactly:')
-    lines.push(`/agent ${specName} ${activeStepName}`)
 
-    if (!isLast && nextStep) {
+    if (gated && nextStep) {
+      // Approval-gated step: agent must defer progression to a human user.
+      lines.push(`This step requires human approval before advancing. Do not post a /agent dispatch line yourself.`)
       lines.push('')
-      lines.push('To advance to the next step, post:')
-      lines.push(`/agent ${specName} ${nextStep.name}`)
-    }
+      lines.push('At the end of your response, instruct the user how to proceed:')
+      lines.push(`  - To approve and advance, the user posts: /agent ${specName} ${nextStep.name}`)
+      lines.push(`  - To have you revise this step, the user posts: /agent ${specName} ${activeStepName}`)
+      lines.push('')
+      lines.push('Only a human user should post one of these lines.')
+      lines.push('The line must be at the start of a comment line and not inside a code fence or blockquote.')
+    } else {
+      lines.push('To keep working on the current step, post a comment containing exactly:')
+      lines.push(`/agent ${specName} ${activeStepName}`)
 
-    lines.push('')
-    lines.push('A human user can post either line to approve progression.')
-    lines.push('The line must be at the start of a comment line and not inside a code fence or blockquote.')
+      if (!isLast && nextStep) {
+        lines.push('')
+        lines.push('To advance to the next step, post:')
+        lines.push(`/agent ${specName} ${nextStep.name}`)
+      }
 
-    if (isLast) {
-      lines.push(`On this final step ("${activeStepName}"), do not post any /agent line when finished.`)
+      lines.push('')
+      lines.push('A human user can post either line to approve progression.')
+      lines.push('The line must be at the start of a comment line and not inside a code fence or blockquote.')
+
+      if (isLast) {
+        lines.push(`On this final step ("${activeStepName}"), do not post any /agent line when finished.`)
+      }
     }
   } else {
     lines.push('')
@@ -479,7 +494,8 @@ export function formatAgentSpec(spec: AgentSpec): string {
       const promptStr = typeof s.prompt === 'string'
         ? s.prompt.slice(0, 80) + (s.prompt.length > 80 ? '...' : '')
         : formatResolvable(s.prompt)
-      lines.push(`    ${i + 1}. ${s.name}`)
+      const approvalSuffix = s.requiresApproval ? '  (requires approval)' : ''
+      lines.push(`    ${i + 1}. ${s.name}${approvalSuffix}`)
       lines.push(`       prompt: ${promptStr}`)
     }
   }

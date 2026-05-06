@@ -62,6 +62,17 @@ describe('agent() / agentStep() / tool() DSL', () => {
     const s = agentStep('my-step', 'Do the thing.')
     expect(s.name).toBe('my-step')
     expect(s.prompt).toBe('Do the thing.')
+    expect(s.requiresApproval).toBeUndefined()
+  })
+
+  it('agentStep() with requiresApproval: true sets the flag', () => {
+    const s = agentStep('plan', 'Draft a plan.', { requiresApproval: true })
+    expect(s.requiresApproval).toBe(true)
+  })
+
+  it('agentStep() with requiresApproval: false omits the flag', () => {
+    const s = agentStep('go', 'Go.', { requiresApproval: false })
+    expect('requiresApproval' in s).toBe(false)
   })
 
   it('tool() preserves name, description, path, usage', () => {
@@ -212,6 +223,56 @@ describe('formatDispatchReference()', () => {
 
   it('returns empty string for empty steps array', () => {
     expect(formatDispatchReference('my-agent', [])).toBe('')
+  })
+
+  it('approval-gated step instructs the agent NOT to self-advance', () => {
+    const steps = [
+      agentStep('plan', 'p', { requiresApproval: true }),
+      agentStep('ship', 's'),
+    ]
+    const ref = formatDispatchReference('my-agent', steps, 'plan')
+    expect(ref).toContain('requires human approval')
+    expect(ref).toContain('Do not post a /agent dispatch line yourself')
+    expect(ref).not.toContain('To advance to the next step, post:')
+    expect(ref).not.toContain('To keep working on the current step, post')
+  })
+
+  it('approval-gated step still names the next step in user-facing instructions', () => {
+    const steps = [
+      agentStep('plan', 'p', { requiresApproval: true }),
+      agentStep('ship', 's'),
+    ]
+    const ref = formatDispatchReference('my-agent', steps, 'plan')
+    expect(ref).toContain('/agent my-agent ship')
+    expect(ref).toContain('/agent my-agent plan')
+  })
+
+  it('approval flag has no effect on a non-active step', () => {
+    const steps = [
+      agentStep('plan', 'p', { requiresApproval: true }),
+      agentStep('ship', 's'),
+    ]
+    const ref = formatDispatchReference('my-agent', steps, 'ship')
+    expect(ref).not.toContain('requires human approval')
+    expect(ref).toContain('final step')
+  })
+
+  it('approval flag is ignored on the final step (no next step to gate)', () => {
+    const steps = [
+      agentStep('plan', 'p'),
+      agentStep('ship', 's', { requiresApproval: true }),
+    ]
+    const ref = formatDispatchReference('my-agent', steps, 'ship')
+    expect(ref).not.toContain('requires human approval')
+    expect(ref).toContain('final step')
+  })
+
+  it('non-gated step preserves the existing wording (regression)', () => {
+    const steps = [agentStep('plan', 'p'), agentStep('ship', 's')]
+    const ref = formatDispatchReference('my-agent', steps, 'plan')
+    expect(ref).toContain('To keep working on the current step, post a comment containing exactly:')
+    expect(ref).toContain('To advance to the next step, post:')
+    expect(ref).not.toContain('requires human approval')
   })
 })
 
@@ -561,6 +622,35 @@ describe('validateAgent()', () => {
     ).toBe(true)
   })
 
+  it('passes when a non-final step uses requiresApproval', () => {
+    const s = agent('approve', {
+      system: 'hi',
+      steps: [
+        agentStep('plan', 'plan it', { requiresApproval: true }),
+        agentStep('ship', 'ship it'),
+      ],
+      tools: [],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(true)
+    expect(result.warnings.some(w => w.message.includes('requiresApproval'))).toBe(false)
+  })
+
+  it('warns when the final step uses requiresApproval (no next step to gate)', () => {
+    const s = agent('approve', {
+      system: 'hi',
+      steps: [
+        agentStep('plan', 'plan it'),
+        agentStep('ship', 'ship it', { requiresApproval: true }),
+      ],
+      tools: [],
+    })
+    const result = validateAgent(s)
+    expect(result.valid).toBe(true)
+    expect(result.warnings.some(w => w.message.includes('requiresApproval'))).toBe(true)
+    expect(result.warnings.some(w => w.message.includes('final step'))).toBe(true)
+  })
+
   it('warns on secret() in a tool description nested inside a toolset', () => {
     const ts = toolset('ops', [tool('leaky', { description: secret('TOOL_DESC') })])
     const s = agent('bot', {
@@ -645,6 +735,21 @@ describe('formatAgentSpec()', () => {
     const out = formatAgentSpec(deployAgent)
     expect(out).toContain('Dispatch reference')
     expect(out).toContain('deploy-agent')
+  })
+
+  it('annotates approval-gated steps with "(requires approval)"', () => {
+    const s = agent('gated', {
+      system: 'hi',
+      steps: [
+        agentStep('plan', 'plan it', { requiresApproval: true }),
+        agentStep('ship', 'ship it'),
+      ],
+      tools: [],
+    })
+    const out = formatAgentSpec(s)
+    expect(out).toContain('plan  (requires approval)')
+    expect(out).toContain('ship')
+    expect(out).not.toContain('ship  (requires approval)')
   })
 
   it('renders toolset header before grouped tools', () => {
